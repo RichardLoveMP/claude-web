@@ -536,6 +536,128 @@ async def upload(file: UploadFile = File(...)):
     }
 
 
+DOC_EXTS = {".pdf", ".docx", ".csv", ".tsv", ".txt", ".md", ".json", ".log"}
+MAX_DOC_MB = 20
+MAX_DOC_CHARS = 50000
+
+
+def _extract_pdf_text(path: Path) -> str:
+    import pypdf
+    reader = pypdf.PdfReader(str(path))
+    parts: List[str] = []
+    for page in reader.pages:
+        try:
+            parts.append(page.extract_text() or "")
+        except Exception:
+            continue
+    return "\n\n".join(parts)
+
+
+def _extract_docx_text(path: Path) -> str:
+    import docx
+    doc = docx.Document(str(path))
+    parts = [p.text for p in doc.paragraphs if p.text]
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells]
+            parts.append(" | ".join(cells))
+    return "\n".join(parts)
+
+
+@app.post("/api/upload-doc")
+async def upload_doc(file: UploadFile = File(...)):
+    if file.filename is None:
+        raise HTTPException(status_code=400, detail="filename missing")
+    ext = Path(file.filename).suffix.lower()
+    if ext not in DOC_EXTS:
+        raise HTTPException(status_code=400, detail=f"unsupported type {ext}")
+
+    data = await file.read()
+    if len(data) > MAX_DOC_MB * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"file exceeds {MAX_DOC_MB} MB")
+
+    name = f"{uuid.uuid4().hex}{ext}"
+    path = UPLOADS_DIR / name
+    path.write_bytes(data)
+
+    try:
+        if ext == ".pdf":
+            text = _extract_pdf_text(path)
+        elif ext == ".docx":
+            text = _extract_docx_text(path)
+        else:
+            text = data.decode("utf-8", errors="replace")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"extract failed: {e}")
+
+    text = text.strip()
+    truncated = len(text) > MAX_DOC_CHARS
+    if truncated:
+        text = text[:MAX_DOC_CHARS]
+
+    return {
+        "path": str(path.absolute()),
+        "name": file.filename,
+        "size": len(data),
+        "ext": ext,
+        "content": text,
+        "length": len(text),
+        "truncated": truncated,
+    }
+
+
+class ExecCodeRequest(BaseModel):
+    language: str
+    code: str
+    timeout: Optional[int] = 10
+
+
+EXEC_LANG_MAP: Dict[str, List[str]] = {
+    "python": ["python3", "-c"],
+    "python3": ["python3", "-c"],
+    "py": ["python3", "-c"],
+    "javascript": ["node", "-e"],
+    "js": ["node", "-e"],
+    "node": ["node", "-e"],
+    "bash": ["bash", "-c"],
+    "sh": ["bash", "-c"],
+    "shell": ["bash", "-c"],
+}
+
+
+@app.post("/api/exec-code")
+async def exec_code(req: ExecCodeRequest):
+    lang = (req.language or "").lower().strip()
+    cmd = EXEC_LANG_MAP.get(lang)
+    if cmd is None:
+        raise HTTPException(status_code=400, detail=f"unsupported language: {lang}")
+    if not req.code or len(req.code) > 100_000:
+        raise HTTPException(status_code=400, detail="code empty or too large")
+
+    timeout = max(1, min(int(req.timeout or 10), 30))
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, req.code,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(UPLOADS_DIR),
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return {"stdout": "", "stderr": f"execution timed out after {timeout}s", "returncode": -1, "timed_out": True}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=500, detail=f"interpreter not found: {e}")
+
+    return {
+        "stdout": stdout.decode("utf-8", errors="replace")[:50_000],
+        "stderr": stderr.decode("utf-8", errors="replace")[:10_000],
+        "returncode": proc.returncode,
+        "timed_out": False,
+    }
+
+
 def _row_to_session(r: sqlite3.Row) -> dict:
     tags = [t for t in (r["tags"] or "").split(",") if t]
     return {
@@ -738,6 +860,37 @@ async def delete_prompt(prompt_id: str):
     with db_connect() as conn:
         conn.execute("DELETE FROM prompts WHERE id = ?", (prompt_id,))
     return {"ok": True}
+
+
+@app.post("/api/suggest-followups")
+async def suggest_followups(session_id: str = ""):
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id required")
+    events = load_events(session_id)
+    if not events:
+        return {"suggestions": []}
+    snippet = summarize_text_from_events(events[-20:])[-3000:]
+    if not snippet.strip():
+        return {"suggestions": []}
+    prompt = (
+        "根据以下对话内容，生成3个用户可能想继续追问的简短问题（每个不超过20字）。"
+        "只输出3行，每行一个问题，不要编号、不要引号、不要其他内容。\n\n"
+        f"{snippet}"
+    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "claude", "-p", prompt, "--output-format", "text", "--model", "haiku",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+    except asyncio.TimeoutError:
+        return {"suggestions": []}
+    except Exception:
+        return {"suggestions": []}
+    lines = [l.strip() for l in stdout.decode("utf-8", errors="replace").splitlines() if l.strip()]
+    suggestions = [l.lstrip("0123456789.-、）) ") for l in lines[:3]]
+    return {"suggestions": suggestions}
 
 
 @app.get("/api/cwds")

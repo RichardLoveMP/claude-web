@@ -27,9 +27,15 @@
 - **Token 级流式输出**（打字机效果）
 - 多轮对话（基于 `claude --resume`）
 - 停止正在运行的任务
+- **跟进建议**：回答后自动生成 3 个「你可能想继续问」的追问按钮
+- **会话分叉**：基于任意历史消息编辑 / 重新生成，原会话保留
+- **思考动画**：等待响应时用跳动圆点 + 扫光文字提示
 
 ### 📝 输入
 - 文本 + 图片（**文件选择 / 粘贴 / 拖拽**）
+- **文档上传**：PDF / Word / CSV / TXT / MD / JSON / LOG 自动提取文本作为上下文
+- **URL 自动检测**：输入框里粘贴链接，发送时自动抓取网页正文
+- **联网搜索开关**：一键激活 WebSearch / WebFetch
 - `@` 引用工作目录下的文件（↑↓ 选择）
 - Token 估算 + 草稿自动保存
 - 提示词模板库
@@ -39,7 +45,10 @@
 - 工具调用图标化（Bash / Read / Write / Edit 等）
 - **Edit 工具并排 diff**
 - **Mermaid** 图表 + **LaTeX** 公式
-- 图片 Lightbox
+- **代码块一键运行**：Python / JavaScript / Bash 现场执行，输出嵌在对话里
+- 图片 Lightbox（点击放大）
+- 代码块 / 全文一键复制
+- **滚动控制**：流式输出中手动往上滚不被打断，右下角浮动「跳到最新 ↓」按钮带新内容计数
 
 ### 🗂 会话管理
 - 📌 置顶 / 📥 归档 / 🏷 标签
@@ -52,15 +61,24 @@
 - **权限策略**：自由 / 允许编辑 / 计划 / 只读 / 自定义工具列表
 - **Git Checkpoint**：每轮对话前自动 `git stash create` 快照，一键回滚文件
 - **编辑 / 重新生成**：基于任意历史消息分叉新会话
+- **SSRF 防护**：URL 抓取拒绝私网 / 本地主机
+
+### 📋 TodoWrite 实时看板
+- Claude 调用 TodoWrite 时右上角弹出任务面板
+- 进度条 + 逐项状态（⬜ 待办 / ⏳ 进行中 / ✅ 完成）
+- 多次 TodoWrite 调用自动队列回放，进度动画
+- 面板可折叠 / 关闭
 
 ### 📊 其它
 - 模型切换（Opus / Sonnet / Haiku）
 - 使用统计（总成本 / 每日成本柱图 / 工具使用排行）
-- Git 状态栏（branch / dirty）
+- Git 状态栏（branch / dirty 文件数）
+- 系统提示词自定义
 - 暗黑模式
 - 快捷键：`⌘K` 搜索 · `⌘N` 新会话 · `Esc` 关闭弹窗
 - 浏览器通知 + 完成提示音
-- 移动端响应式
+- 移动端响应式（侧栏可收起）
+- IME 输入法兼容（中文拼音回车不误发）
 
 ---
 
@@ -132,22 +150,27 @@ uvicorn.run(app, host="0.0.0.0", port=port)
 PORT=9000 python server.py
 ```
 
+### 多窗口并行对话
+
+直接在新浏览器标签页 / 窗口打开 `http://127.0.0.1:8765`，点「＋ 新会话」即可并行对话。每个标签页独立，互不干扰。
+
 ---
 
 ## 🧩 技术栈
 
 | 层 | 技术 |
 |---|---|
-| 后端 | Python 3.9+ · FastAPI · uvicorn · SQLite |
+| 后端 | Python 3.9+ · FastAPI · uvicorn · SQLite · pypdf · python-docx |
 | 前端 | 原生 JS · TailwindCSS · marked.js · highlight.js · Mermaid · KaTeX · Chart.js |
-| 协议 | Server-Sent Events（流式输出） |
+| 协议 | Server-Sent Events（流式输出）· stream-json stdin（多模态图片输入） |
 | 依赖 | `claude` CLI（透过 subprocess 调用） |
 
 ## 📐 架构
 
 ```
 浏览器 ──POST /api/chat──> FastAPI
-                            └─ subprocess: claude -p --output-format stream-json \
+                            └─ subprocess: claude -p [message | --input-format stream-json] \
+                                           --output-format stream-json \
                                            --include-partial-messages \
                                            [--session-id | --resume] \
                                            [--permission-mode | --allowed-tools]
@@ -156,6 +179,7 @@ PORT=9000 python server.py
 
 - 会话 ID 首轮前端生成 UUID 通过 `--session-id` 传入，后续用 `--resume`
 - `--include-partial-messages` 开启 token 级流式
+- **图片输入**走 `--input-format stream-json` + stdin，base64 内联（跟 Anthropic API 多模态格式一致），而非通过 Read 工具间接读取，避免精度损失
 - 每轮对话前若 cwd 是 git 仓库，执行 `git stash create` 创建 checkpoint
 - 会话元数据存 SQLite（`claude-web.db`），事件流存 JSONL（`history/{session_id}.jsonl`）
 
@@ -169,11 +193,38 @@ claude-web/
 ├── static/
 │   └── index.html         # 单页前端
 ├── requirements.txt
+├── screenshots/           # README 使用的截图
 ├── history/               # 会话事件 JSONL（运行时生成，gitignore）
-├── uploads/               # 上传的图片（运行时生成，gitignore）
+├── uploads/               # 上传的图片/文档（运行时生成，gitignore）
 ├── claude-web.db          # SQLite 会话元数据（运行时生成，gitignore）
 └── .venv/                 # 虚拟环境（gitignore）
 ```
+
+---
+
+## 🧰 API 端点速查
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/chat` | POST | 主对话，SSE 流式返回 |
+| `/api/chat/stop/{session_id}` | POST | 停止正在运行的会话 |
+| `/api/upload` | POST | 上传图片 |
+| `/api/upload-doc` | POST | 上传文档（PDF/DOCX/CSV/TXT/MD），自动提取文本 |
+| `/api/exec-code` | POST | 运行代码块（Python/JS/Bash，15s 超时） |
+| `/api/fetch-url` | POST | 抓取 URL 正文（带 SSRF 防护） |
+| `/api/sessions` | GET | 列出所有会话（含搜索 / 归档 / 标签） |
+| `/api/sessions/{id}` | GET/PATCH/DELETE | 查看 / 修改 / 删除会话 |
+| `/api/sessions/{id}/export` | GET | 导出 Markdown |
+| `/api/sessions/{id}/prepare-fork` | POST | 创建分叉会话 |
+| `/api/sessions/{id}/restore-checkpoint` | POST | Git 回滚 |
+| `/api/sessions/{id}/suggest-title` | POST | AI 智能命名 |
+| `/api/suggest-followups` | POST | 生成跟进建议 |
+| `/api/prompts` | GET/POST/PUT/DELETE | 提示词模板 CRUD |
+| `/api/stats` | GET | 使用统计（成本 / 工具 / 每日） |
+| `/api/git` | GET | 当前目录 git 状态 |
+| `/api/files` | GET | 当前目录文件列表（@ 引用用） |
+| `/api/cwds` | GET | 最近用过的工作目录 |
+| `/api/tags` | GET | 所有标签统计 |
 
 ---
 
@@ -183,19 +234,33 @@ claude-web/
 - **Checkpoint 仅限 git 仓库**：非 git 目录跳过（后续可加 tar 快照）。
 - **分叉会话会打包上下文**：编辑/重新生成时把历史作为前缀发给 Claude（可能多消耗 token）。
 - **无鉴权**：仅供本地使用，不建议直接暴露公网。
+- **代码块运行无沙盒**：Python/JS/Bash 直接在本机跑，点运行前会二次确认。
+- **Claude CLI `-p` 模式流式局限**：CLI 在非交互模式下会整段缓冲后一次性吐事件，token 流式是"视觉动画模拟"，非真实 token 速率。
 
 ---
 
 ## 🗺 Roadmap
 
+### 已完成 ✅
+- [x] PDF / CSV / Word 上传
+- [x] URL 自动抓取
+- [x] 联网搜索开关
+- [x] 代码块一键运行
+- [x] TodoWrite 实时看板
+- [x] 跟进建议
+- [x] 智能滚动控制
+
+### 待办
 - [ ] Artifacts 侧边预览（HTML/React 实时渲染）
-- [ ] PDF / CSV / Word 上传
 - [ ] MCP server 管理面板
 - [ ] Slash 命令透传（`/compact` `/clear` `/init`）
 - [ ] 导入 `~/.claude/projects/` 原生会话
 - [ ] 基于 MCP 的真·交互审批
 - [ ] 简单鉴权（Token / 密码）
 - [ ] 内嵌终端（xterm.js）
+- [ ] Projects 分组（跨会话共享上下文）
+- [ ] 划选文字浮动工具栏
+- [ ] 语音输入 / 朗读
 
 ---
 
@@ -210,4 +275,4 @@ Apache License 2.0 — 见 [LICENSE](LICENSE)
 ## 🙏 致谢
 
 - [Claude Code](https://docs.claude.com/claude-code) — Anthropic
-- [FastAPI](https://fastapi.tiangolo.com/) · [TailwindCSS](https://tailwindcss.com/) · [marked](https://github.com/markedjs/marked)
+- [FastAPI](https://fastapi.tiangolo.com/) · [TailwindCSS](https://tailwindcss.com/) · [marked](https://github.com/markedjs/marked) · [pypdf](https://github.com/py-pdf/pypdf) · [python-docx](https://github.com/python-openxml/python-docx)

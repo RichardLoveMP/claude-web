@@ -108,6 +108,22 @@
   .url-chip .close:hover { color:#ef4444; }
   .toolbar-btn-active { background:#fb923c !important; color:#fff; }
   .dark .toolbar-btn-active { background:#c2410c !important; color:#fff; }
+  .doc-chip { display:inline-flex; align-items:center; gap:6px; max-width:280px; padding:4px 10px; background:#ecfeff; border:1px solid #a5f3fc; border-radius:10px; font-size:12px; color:#155e75; }
+  .dark .doc-chip { background:#083344; border-color:#155e75; color:#a5f3fc; }
+  .doc-chip .close { cursor:pointer; color:#94a3b8; margin-left:4px; }
+  .doc-chip .close:hover { color:#ef4444; }
+  .run-btn { position:absolute; top:6px; right:60px; background:rgba(34,197,94,0.2); border:1px solid rgba(34,197,94,0.4); color:#86efac; padding:2px 8px; border-radius:4px; font-size:11px; cursor:pointer; opacity:0; transition:opacity .15s; }
+  .prose-custom pre:hover .run-btn { opacity:1; }
+  .run-btn:hover { background:rgba(34,197,94,0.35); }
+  .run-btn.running { background:rgba(251,146,60,0.3); border-color:rgba(251,146,60,0.5); color:#fdba74; opacity:1; }
+  .run-output { margin-top: 6px; padding: 8px 10px; background:#0f172a; border-radius:6px; font-size:12px; color:#e2e8f0; white-space:pre-wrap; overflow-x:auto; border-left:3px solid #22c55e; }
+  .run-output.error { border-left-color:#ef4444; }
+  .followup-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; padding-left:36px; }
+  .followup-chip { padding: 5px 12px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:9999px; font-size:12px; color:#475569; cursor:pointer; transition:all .15s; max-width:100%; }
+  .followup-chip:hover { background:#fed7aa; border-color:#fb923c; color:#9a3412; }
+  .dark .followup-chip { background:#1e293b; border-color:#334155; color:#cbd5e1; }
+  .dark .followup-chip:hover { background:#7c2d12; border-color:#c2410c; color:#fed7aa; }
+  .followup-loading { font-size:11px; color:#94a3b8; padding-left:36px; margin-top:4px; }
 
   /* TodoWrite live panel */
   .todo-panel {
@@ -251,13 +267,21 @@
   </main>
 
   <div id="urlChips" class="hidden bg-white dark:bg-slate-800 border-t border-gray-200 dark:border-slate-700 px-4 pt-2 pb-1 max-w-4xl mx-auto w-full flex flex-wrap gap-2"></div>
+  <div id="docChips" class="hidden bg-white dark:bg-slate-800 border-t border-gray-200 dark:border-slate-700 px-4 pt-2 pb-1 max-w-4xl mx-auto w-full flex flex-wrap gap-2"></div>
   <div id="attachments" class="hidden bg-white dark:bg-slate-800 border-t border-gray-200 dark:border-slate-700 px-4 pt-3 pb-1 max-w-4xl mx-auto w-full flex flex-wrap gap-2"></div>
+
+  <button id="jumpBottomBtn" class="hidden fixed bottom-24 right-6 px-3 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full shadow-lg text-sm flex items-center gap-2 z-20">
+    <span>↓</span><span>最新</span><span id="jumpBottomBadge" class="hidden text-xs bg-white text-orange-600 rounded-full px-1.5">0</span>
+  </button>
 
   <footer class="bg-white dark:bg-slate-800 border-t border-gray-200 dark:border-slate-700 p-3">
     <form id="form" class="max-w-4xl mx-auto flex gap-2 items-end relative">
       <input type="file" id="fileInput" accept="image/*" multiple class="hidden" />
+      <input type="file" id="docInput" accept=".pdf,.docx,.csv,.tsv,.txt,.md,.json,.log" multiple class="hidden" />
       <button type="button" id="attachBtn" title="上传图片 (支持粘贴/拖拽)"
         class="px-3 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 rounded-lg">📎</button>
+      <button type="button" id="docAttachBtn" title="上传文档 (PDF/Word/CSV/TXT/MD)"
+        class="px-3 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 rounded-lg">📄</button>
       <button type="button" id="webSearchBtn" title="联网搜索：开启后 Claude 会优先用 WebSearch / WebFetch 获取最新信息"
         class="px-3 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 rounded-lg">🌐</button>
       <div class="flex-1 relative">
@@ -450,6 +474,11 @@ const newSessionBtn = $('newSession'), welcome = $('welcome');
 const sessionList = $('sessionList');
 const fileInput = $('fileInput'), attachBtn = $('attachBtn'), attachmentsEl = $('attachments');
 const webSearchBtn = $('webSearchBtn');
+const docInput = $('docInput');
+const docAttachBtn = $('docAttachBtn');
+const docChipsEl = $('docChips');
+const jumpBottomBtn = $('jumpBottomBtn');
+const jumpBottomBadge = $('jumpBottomBadge');
 const todoPanel = $('todoPanel');
 const todoPanelList = $('todoPanelList');
 const todoProgress = $('todoProgress');
@@ -485,7 +514,21 @@ const suggestTitleBtn = $('suggestTitleBtn');
 const toggleSidebar = $('toggleSidebar'), sidebar = $('sidebar');
 
 // ===== utilities =====
-function scrollBottom() { chatEl.scrollTop = chatEl.scrollHeight; }
+let userScrolledUp = false;
+function isNearBottom() {
+  return chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 80;
+}
+function scrollBottom() {
+  if (!userScrolledUp) {
+    chatEl.scrollTop = chatEl.scrollHeight;
+  } else if (typeof bumpNewContent === 'function') {
+    bumpNewContent();
+  }
+}
+function forceScrollBottom() {
+  userScrolledUp = false;
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
 function removeWelcome() { if (welcome && welcome.parentNode) welcome.remove(); }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -606,7 +649,7 @@ function addUserMessage(text, images, opts) {
   `;
   el.querySelectorAll('[data-lightbox]').forEach(img => img.addEventListener('click', () => openLightbox(img.src)));
   chatEl.appendChild(el);
-  scrollBottom();
+  forceScrollBottom();
 }
 
 function newAssistantBubble() {
@@ -640,9 +683,66 @@ function addTextBlock(container, text) {
       setTimeout(() => btn.textContent = '复制', 1500);
     });
     pre.appendChild(btn);
+    attachRunButton(pre, code);
   });
   container.appendChild(block);
   postProcessRendered(block);
+}
+
+function detectCodeLang(preEl) {
+  const codeEl = preEl.querySelector('code');
+  if (!codeEl) return null;
+  const cls = codeEl.className || '';
+  const m = cls.match(/language-([a-z0-9]+)/i);
+  if (!m) return null;
+  const lang = m[1].toLowerCase();
+  const supported = ['python', 'python3', 'py', 'javascript', 'js', 'node', 'bash', 'sh', 'shell'];
+  return supported.includes(lang) ? lang : null;
+}
+
+function attachRunButton(pre, code) {
+  const lang = detectCodeLang(pre);
+  if (!lang) return;
+  const runBtn = document.createElement('button');
+  runBtn.className = 'run-btn';
+  runBtn.textContent = '▶ 运行';
+  runBtn.title = `在本地执行此 ${lang} 代码（⚠️ 无沙盒，请确认代码安全）`;
+  runBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!confirm(`将在本机执行这段 ${lang} 代码，确认安全再继续？`)) return;
+    runBtn.classList.add('running');
+    runBtn.textContent = '⏳ 运行中';
+    let outEl = pre.nextElementSibling;
+    if (!outEl || !outEl.classList.contains('run-output')) {
+      outEl = document.createElement('div');
+      outEl.className = 'run-output';
+      pre.parentElement.insertBefore(outEl, pre.nextSibling);
+    }
+    outEl.textContent = '...';
+    try {
+      const r = await fetch('/api/exec-code', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ language: lang, code, timeout: 15 }),
+      });
+      if (!r.ok) { const d = await r.json().catch(()=>({})); outEl.textContent = '错误: ' + (d.detail || r.status); outEl.classList.add('error'); return; }
+      const data = await r.json();
+      const parts = [];
+      if (data.stdout) parts.push(data.stdout);
+      if (data.stderr) parts.push('--- stderr ---\n' + data.stderr);
+      if (data.timed_out) parts.push('(超时中断)');
+      parts.push(`--- exit: ${data.returncode} ---`);
+      outEl.textContent = parts.join('\n');
+      outEl.classList.toggle('error', data.returncode !== 0 || data.timed_out);
+    } catch (e) {
+      outEl.textContent = '请求失败: ' + e.message;
+      outEl.classList.add('error');
+    } finally {
+      runBtn.classList.remove('running');
+      runBtn.textContent = '▶ 运行';
+    }
+  });
+  pre.appendChild(runBtn);
 }
 
 function renderEditDiff(inputData) {
@@ -979,6 +1079,7 @@ function handleStreamEvent(ev, container) {
           setTimeout(() => btn.textContent = '复制', 1500);
         });
         pre.appendChild(btn);
+        attachRunButton(pre, code);
       });
       postProcessRendered(el);
     } else if (block.type === 'thinking' && block.el) {
@@ -1294,10 +1395,11 @@ async function sendCore(message, displayMessage, imagePaths) {
   let actualDisplay = displayMessage;
   if (!isFork) {
     const urlBlock = composeUrlContext();
+    const docBlock = composeDocContext();
     const wsPrefix = webSearchPrefix();
-    if (urlBlock || wsPrefix) {
+    if (urlBlock || docBlock || wsPrefix) {
       actualDisplay = message;
-      actualMessage = wsPrefix + urlBlock + message;
+      actualMessage = wsPrefix + docBlock + urlBlock + message;
     }
   }
 
@@ -1307,6 +1409,7 @@ async function sendCore(message, displayMessage, imagePaths) {
     renderAttachments();
     clearDraft();
     clearUrlContext();
+    clearDocs();
   } else {
     addUserMessage(displayMessage, imagePaths);
   }
@@ -1315,7 +1418,7 @@ async function sendCore(message, displayMessage, imagePaths) {
 
   const container = newAssistantBubble();
   showThinking(container, '正在思考');
-  scrollBottom();
+  forceScrollBottom();
 
   sendBtn.disabled = true;
   stopBtn.classList.remove('hidden');
@@ -1368,6 +1471,7 @@ async function sendCore(message, displayMessage, imagePaths) {
     hideThinking(asstContainer);
     notifyUser('Claude Code 已完成', titleLabel.textContent);
     beep();
+    fetchFollowupSuggestions();
   } catch (e) {
     hideThinking(container);
     if (e.name !== 'AbortError') addErrorBlock(e.message);
@@ -1431,6 +1535,7 @@ function startNewSession() {
   pendingImages = [];
   renderAttachments();
   clearUrlContext();
+  clearDocs();
   hideTodoPanel();
   currentUserIndex = 0;
   lastUserIndex = -1;
@@ -1604,7 +1709,7 @@ async function loadSession(id) {
         handleEvent(ev, asstContainer);
       }
     }
-    scrollBottom();
+    forceScrollBottom();
     highlightActiveSession();
     if (window.innerWidth <= 768) sidebar.classList.remove('open');
   } catch (e) { console.warn(e); }
@@ -1980,6 +2085,123 @@ function composeUrlContext() {
 function clearUrlContext() {
   urlContext.clear();
   renderUrlChips();
+}
+
+// ===== document upload =====
+const pendingDocs = []; // {name, content, length, truncated}
+
+docAttachBtn.addEventListener('click', () => docInput.click());
+docInput.addEventListener('change', async () => {
+  const files = Array.from(docInput.files || []);
+  docInput.value = '';
+  for (const f of files) {
+    const fd = new FormData();
+    fd.append('file', f);
+    try {
+      const r = await fetch('/api/upload-doc', { method:'POST', body: fd });
+      if (!r.ok) { const d = await r.json().catch(()=>({})); alert('上传失败: ' + (d.detail || r.status)); continue; }
+      const data = await r.json();
+      pendingDocs.push(data);
+    } catch (e) { alert('上传出错: ' + e.message); }
+  }
+  renderDocChips();
+});
+
+function renderDocChips() {
+  if (pendingDocs.length === 0) { docChipsEl.classList.add('hidden'); docChipsEl.innerHTML = ''; return; }
+  docChipsEl.classList.remove('hidden');
+  docChipsEl.innerHTML = pendingDocs.map((d, i) => `
+    <span class="doc-chip">
+      <span>📄</span>
+      <span class="truncate" style="max-width:160px">${escapeHtml(d.name)}</span>
+      <span style="font-size:10px;color:#64748b">${d.length} 字${d.truncated ? ' (截断)' : ''}</span>
+      <span class="close" data-doc-idx="${i}">×</span>
+    </span>
+  `).join('');
+  docChipsEl.querySelectorAll('[data-doc-idx]').forEach(el => {
+    el.addEventListener('click', () => { pendingDocs.splice(Number(el.dataset.docIdx), 1); renderDocChips(); });
+  });
+}
+
+function composeDocContext() {
+  if (pendingDocs.length === 0) return '';
+  return pendingDocs.map(d => {
+    const suffix = d.truncated ? `\n(已截断，原文共约 ${d.length} 字)` : '';
+    return `【文档: ${d.name}】\n---\n${d.content}\n---${suffix}`;
+  }).join('\n\n') + '\n\n';
+}
+
+function clearDocs() { pendingDocs.length = 0; renderDocChips(); }
+
+// ===== jump to bottom button =====
+let newContentCount = 0;
+
+chatEl.addEventListener('scroll', () => {
+  if (isNearBottom()) {
+    userScrolledUp = false;
+    jumpBottomBtn.classList.add('hidden');
+    newContentCount = 0;
+  } else {
+    userScrolledUp = true;
+    jumpBottomBtn.classList.remove('hidden');
+  }
+});
+
+jumpBottomBtn.addEventListener('click', () => {
+  forceScrollBottom();
+  jumpBottomBtn.classList.add('hidden');
+  newContentCount = 0;
+  jumpBottomBadge.classList.add('hidden');
+});
+
+function bumpNewContent() {
+  if (userScrolledUp) {
+    newContentCount++;
+    jumpBottomBadge.textContent = String(newContentCount);
+    jumpBottomBadge.classList.remove('hidden');
+    jumpBottomBtn.classList.remove('hidden');
+  }
+}
+
+// ===== follow-up suggestions =====
+async function fetchFollowupSuggestions() {
+  if (!sessionId) return;
+  const asstWraps = chatEl.querySelectorAll('.asst-wrap');
+  const lastAsst = asstWraps[asstWraps.length - 1];
+  if (!lastAsst) return;
+  const existing = lastAsst.querySelector('.followup-chips, .followup-loading');
+  if (existing) existing.remove();
+
+  const loading = document.createElement('div');
+  loading.className = 'followup-loading';
+  loading.textContent = '💡 生成建议中...';
+  lastAsst.insertAdjacentElement('afterend', loading);
+
+  try {
+    const r = await fetch('/api/suggest-followups?session_id=' + encodeURIComponent(sessionId), { method: 'POST' });
+    loading.remove();
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.suggestions || data.suggestions.length === 0) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'followup-chips';
+    data.suggestions.forEach(s => {
+      const chip = document.createElement('button');
+      chip.className = 'followup-chip';
+      chip.textContent = s;
+      chip.title = '点击发送这个问题';
+      chip.addEventListener('click', () => {
+        wrap.remove();
+        input.value = s;
+        updateTokenCount();
+        form.requestSubmit();
+      });
+      wrap.appendChild(chip);
+    });
+    lastAsst.insertAdjacentElement('afterend', wrap);
+  } catch {
+    loading.remove();
+  }
 }
 
 // ===== web search toggle =====
