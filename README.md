@@ -156,6 +156,30 @@ PORT=9000 python server.py
 
 ---
 
+## 🔐 提交前敏感信息检查
+
+仓库内置了 `.githooks/pre-commit`，会在 `git commit` 前扫描**已暂存文件**，重点拦截：
+
+- 私钥块
+- 常见平台 Token / API Key 模式
+- 新增行里的 `api_key` / `token` / `password` / `secret` 这类疑似敏感赋值
+
+首次 clone 后执行一次：
+
+```bash
+git config core.hooksPath .githooks
+```
+
+手动检查当前文件也可以：
+
+```bash
+python3 scripts/check_sensitive_info.py --paths server.py static/index.html README.md
+```
+
+如果 hook 拦截了提交，先用 `git diff --cached` 看暂存内容，再决定是否移除或替换敏感信息。
+
+---
+
 ## 🧩 技术栈
 
 | 层 | 技术 |

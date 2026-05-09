@@ -78,6 +78,8 @@ def init_db() -> None:
         ensure_column(conn, "sessions", "archived", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "sessions", "tags", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "sessions", "manual_title", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "sessions", "remote_session_id", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "sessions", "remote_ready", "INTEGER NOT NULL DEFAULT 0")
 
 
 init_db()
@@ -127,6 +129,17 @@ def load_events(session_id: str) -> List[dict]:
     return events
 
 
+def save_events(session_id: str, events: List[dict]) -> None:
+    path = HISTORY_DIR / f"{session_id}.jsonl"
+    if not events:
+        if path.exists():
+            path.unlink()
+        return
+    with path.open("w", encoding="utf-8") as f:
+        for event in events:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
 def summarize_text_from_events(events: List[dict]) -> str:
     parts: List[str] = []
     for ev in events:
@@ -151,6 +164,7 @@ class ChatRequest(BaseModel):
     permission_mode: Optional[str] = None
     allowed_tools: Optional[List[str]] = None
     disallowed_tools: Optional[List[str]] = None
+    force_new: Optional[bool] = None
 
 
 class PromptRequest(BaseModel):
@@ -320,11 +334,58 @@ def derive_title(message: str) -> str:
     return text[:60] if text else "未命名会话"
 
 
+def session_has_remote_conversation(events: List[dict]) -> bool:
+    for ev in events:
+        event_type = ev.get("type")
+        if event_type == "assistant":
+            return True
+        if event_type == "system" and ev.get("subtype") == "init":
+            return True
+        if event_type == "result" and not ev.get("is_error"):
+            return True
+    return False
+
+
+def resolve_remote_session_state(session_id: str, row: Optional[sqlite3.Row], events: List[dict]):
+    if row is None:
+        return session_id, session_has_remote_conversation(events)
+    remote_session_id = (row["remote_session_id"] or "").strip() or session_id
+    if (row["remote_session_id"] or "").strip():
+        return remote_session_id, bool(row["remote_ready"])
+    return remote_session_id, session_has_remote_conversation(events)
+
+
+def set_session_remote_state(session_id: str, remote_session_id: str, remote_ready: bool) -> None:
+    now = time.time()
+    with db_connect() as conn:
+        conn.execute(
+            "UPDATE sessions SET remote_session_id = ?, remote_ready = ?, updated_at = ? WHERE id = ?",
+            (remote_session_id, 1 if remote_ready else 0, now, session_id),
+        )
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
-    is_new = req.session_id is None
     session_id = req.session_id or str(uuid.uuid4())
-    work_dir = req.cwd or os.path.expanduser("~")
+    existing_events = load_events(session_id) if req.session_id else []
+    with db_connect() as conn:
+        row = conn.execute(
+            "SELECT cwd, remote_session_id, remote_ready FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+
+    remote_session_id, remote_ready = resolve_remote_session_state(session_id, row, existing_events)
+    if req.force_new is True:
+        stored_remote_id = ((row["remote_session_id"] or "").strip() if row else "")
+        stored_remote_ready = bool(row["remote_ready"]) if row else False
+        if stored_remote_id and not stored_remote_ready:
+            remote_session_id = stored_remote_id
+        elif row is not None and remote_ready:
+            remote_session_id = str(uuid.uuid4())
+        remote_ready = False
+
+    is_new = not remote_ready
+    work_dir = req.cwd or (row["cwd"] if row and row["cwd"] else os.path.expanduser("~"))
     full_message = compose_message(req.message, req.images)
     display_text = req.display_message if req.display_message is not None else req.message
 
@@ -339,8 +400,10 @@ async def chat(req: ChatRequest):
     }
     append_event(session_id, user_event)
     upsert_session(session_id, derive_title(display_text), work_dir)
+    set_session_remote_state(session_id, remote_session_id, remote_ready and not is_new)
 
     async def generate():
+        remote_became_ready = remote_ready and not is_new
         meta = {
             "type": "meta",
             "session_id": session_id,
@@ -351,7 +414,7 @@ async def chat(req: ChatRequest):
 
         has_images = bool(req.images)
         args = build_args(
-            full_message, session_id,
+            full_message, remote_session_id,
             resume=not is_new,
             model=req.model,
             system_prompt=req.system_prompt,
@@ -402,6 +465,8 @@ async def chat(req: ChatRequest):
                 except json.JSONDecodeError:
                     obj = {"type": "raw", "text": line}
                 t = obj.get("type")
+                if session_has_remote_conversation([obj]):
+                    remote_became_ready = True
                 if t != "stream_event" and not (t == "system" and obj.get("subtype", "").startswith("hook_")):
                     append_event(session_id, obj)
                 yield f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
@@ -421,6 +486,8 @@ async def chat(req: ChatRequest):
             _running_processes.pop(session_id, None)
 
         upsert_session(session_id, derive_title(display_text), work_dir)
+        if remote_became_ready:
+            set_session_remote_state(session_id, remote_session_id, True)
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(
@@ -486,6 +553,51 @@ async def prepare_fork(session_id: str, req: ForkRequest):
         "sent_message": packed_message,
         "display_message": new_text,
         "forked_from": session_id,
+    }
+
+
+@app.post("/api/sessions/{session_id}/prepare-inline-edit")
+async def prepare_inline_edit(session_id: str, req: ForkRequest):
+    if session_id in _running_processes:
+        raise HTTPException(status_code=409, detail="session is running")
+
+    events = load_events(session_id)
+    user_event_positions = [i for i, e in enumerate(events) if e.get("type") == "user_input"]
+    if req.event_index < 0 or req.event_index >= len(user_event_positions):
+        raise HTTPException(status_code=400, detail="invalid event_index")
+
+    target_pos = user_event_positions[req.event_index]
+    events_before = events[:target_pos]
+    original_event = events[target_pos]
+    original_text = original_event.get("text", "")
+    original_images = original_event.get("images", []) or []
+    new_text = req.new_text if req.new_text is not None and req.new_text.strip() else original_text
+
+    with db_connect() as conn:
+        row = conn.execute("SELECT cwd FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    cwd = row["cwd"] if row else os.path.expanduser("~")
+
+    save_events(session_id, events_before)
+    upsert_session(session_id, derive_title(new_text), cwd)
+    set_session_remote_state(session_id, str(uuid.uuid4()), False)
+
+    context = format_context_snippet(events_before)
+    if context:
+        packed_message = (
+            "【以下是之前的对话历史，仅作为参考上下文（不要重复回应历史问题）】\n"
+            f"{context}\n\n"
+            "【请基于以上历史上下文，继续这个对话，并回应下面这条经过编辑的新消息】\n"
+            f"{new_text}"
+        )
+    else:
+        packed_message = new_text
+
+    return {
+        "session_id": session_id,
+        "cwd": cwd,
+        "sent_message": packed_message,
+        "display_message": new_text,
+        "images": original_images,
     }
 
 

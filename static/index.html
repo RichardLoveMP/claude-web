@@ -4,6 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Claude Code Web</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.tailwindcss.com"></script>
 <script>tailwind.config = { darkMode: 'class' };</script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -18,280 +21,676 @@
 <!-- Chart.js -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
-  .prose-custom pre { background:#0d1117; color:#e6edf3; padding:12px; border-radius:8px; overflow-x:auto; font-size:13px; position:relative; }
-  .prose-custom code { background:#f3f4f6; padding:1px 5px; border-radius:4px; font-size:13px; }
-  .dark .prose-custom code { background:#1e293b; color:#e2e8f0; }
-  .prose-custom pre code { background:transparent; padding:0; }
-  .prose-custom p { margin:6px 0; line-height:1.7; }
-  .prose-custom ul, .prose-custom ol { margin:6px 0; padding-left:24px; }
-  .prose-custom h1,.prose-custom h2,.prose-custom h3 { font-weight:600; margin:12px 0 6px; }
-  .prose-custom table { border-collapse:collapse; margin:8px 0; }
-  .prose-custom th, .prose-custom td { border:1px solid #ddd; padding:6px 10px; font-size:13px; }
-  .dark .prose-custom th, .dark .prose-custom td { border-color:#334155; }
-  .prose-custom img { max-width:100%; border-radius:6px; cursor:zoom-in; }
-  details > summary { cursor:pointer; user-select:none; }
-  .spinner { display:inline-block; width:10px; height:10px; border:2px solid #9ca3af; border-top-color:transparent; border-radius:50%; animation: spin .8s linear infinite; }
+  /* ===== Design Tokens ===== */
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --surface-2: #f5f5f4;
+    --border: #e7e5e4;
+    --border-strong: #d6d3d1;
+    --text: #1c1917;
+    --text-muted: #78716c;
+    --text-subtle: #a8a29e;
+    --accent: #c2410c;       /* muted amber, not loud orange */
+    --accent-hover: #9a3412;
+    --accent-soft: #fef3c7;  /* soft warm bg */
+    --accent-soft-2: #fff7ed;
+    --user-bg: #fef3c7;
+    --user-text: #7c2d12;
+    --asst-bg: #ffffff;
+    --shadow-sm: 0 1px 2px rgba(28,25,23,.04);
+    --shadow-md: 0 2px 8px rgba(28,25,23,.06), 0 1px 2px rgba(28,25,23,.04);
+    --shadow-lg: 0 12px 32px rgba(28,25,23,.08), 0 2px 6px rgba(28,25,23,.04);
+  }
+  .dark {
+    --bg: #0c0a09;
+    --surface: #1c1917;
+    --surface-2: #292524;
+    --border: #292524;
+    --border-strong: #44403c;
+    --text: #fafaf9;
+    --text-muted: #a8a29e;
+    --text-subtle: #78716c;
+    --accent: #fb923c;
+    --accent-hover: #fdba74;
+    --accent-soft: #451a03;
+    --accent-soft-2: #292524;
+    --user-bg: #451a03;
+    --user-text: #fed7aa;
+    --asst-bg: #1c1917;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.3);
+    --shadow-md: 0 2px 8px rgba(0,0,0,.35);
+    --shadow-lg: 0 12px 32px rgba(0,0,0,.45);
+  }
 
-  /* thinking indicator - bouncing dots + shimmer label */
+  /* ===== Base ===== */
+  html, body { background: var(--bg); color: var(--text); }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    letter-spacing: -0.005em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  code, pre, .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  /* ===== Scrollbars: completely hidden ===== */
+  * { scrollbar-width: none; -ms-overflow-style: none; }
+  *::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+  /* ===== Prose (markdown rendering) ===== */
+  .prose-custom { line-height: 1.72; font-size: 14.5px; }
+  .prose-custom p { margin: 8px 0; }
+  .prose-custom ul, .prose-custom ol { margin: 8px 0; padding-left: 26px; }
+  .prose-custom li { margin: 3px 0; }
+  .prose-custom h1, .prose-custom h2, .prose-custom h3 { font-weight: 600; margin: 16px 0 8px; letter-spacing: -0.015em; }
+  .prose-custom h1 { font-size: 1.4em; }
+  .prose-custom h2 { font-size: 1.2em; }
+  .prose-custom h3 { font-size: 1.08em; }
+  .prose-custom pre {
+    background: #0d1117; color: #e6edf3;
+    padding: 14px 16px; border-radius: 10px;
+    overflow-x: auto; font-size: 13px; position: relative;
+    line-height: 1.55; margin: 10px 0;
+  }
+  .prose-custom code {
+    background: var(--surface-2); padding: 1.5px 6px; border-radius: 5px;
+    font-size: 0.88em; color: var(--accent-hover);
+  }
+  .dark .prose-custom code { color: var(--accent); }
+  .prose-custom pre code { background: transparent; padding: 0; color: inherit; }
+  .prose-custom table { border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+  .prose-custom th, .prose-custom td { border: 1px solid var(--border); padding: 6px 12px; }
+  .prose-custom th { background: var(--surface-2); font-weight: 600; }
+  .prose-custom img { max-width: 100%; border-radius: 8px; cursor: zoom-in; margin: 8px 0; }
+  .prose-custom blockquote { border-left: 3px solid var(--accent); padding-left: 14px; color: var(--text-muted); margin: 8px 0; font-style: italic; }
+  .prose-custom hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+
+  details > summary { cursor: pointer; user-select: none; }
+
+  /* ===== Message layout (ChatGPT-style) ===== */
+  /* User message: subtle rounded chip on the right, not full bubble */
+  .bubble-user {
+    background: var(--surface-2);
+    color: var(--text);
+    padding: 10px 16px;
+    border-radius: 18px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.6;
+    font-size: 15px;
+    max-width: 100%;
+  }
+  /* Assistant message: no bubble, just content with left avatar */
+  .bubble-asst {
+    background: transparent;
+    padding: 2px 0;
+    position: relative;
+  }
+  .user-msg-wrap { margin: 12px 0; }
+  .asst-wrap { margin: 12px 0; }
+
+  /* ===== Avatar ===== */
+  .avatar {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: linear-gradient(135deg, #fb923c, #c2410c);
+    color: white; font-weight: 700; font-size: 13px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; box-shadow: var(--shadow-sm);
+  }
+
+  /* ===== Session list items ===== */
+  .session-item {
+    padding: 7px 10px; border-radius: 6px; margin-bottom: 1px;
+    cursor: pointer;
+    transition: background .12s;
+    border-left: 2px solid transparent;
+  }
+  .session-item:hover { background: var(--border); }
+  .session-item.active { background: var(--accent-soft-2); border-left-color: var(--accent); }
+  .dark .session-item.active { background: var(--accent-soft); }
+
+  /* ===== Buttons ===== */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    gap: 6px; padding: 7px 12px; border-radius: 8px;
+    font-size: 13px; font-weight: 500;
+    transition: all .15s; cursor: pointer; border: 1px solid transparent;
+  }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover { background: var(--accent-hover); box-shadow: var(--shadow-sm); }
+  .btn-ghost { background: transparent; color: var(--text-muted); }
+  .btn-ghost:hover { background: var(--surface-2); color: var(--text); }
+  .btn-soft { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+  .btn-soft:hover { background: var(--border); }
+  .btn-icon {
+    width: 36px; height: 36px; padding: 0;
+    background: var(--surface-2); color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  .btn-icon:hover { background: var(--border); color: var(--text); }
+
+  /* toolbar toggle active */
+  .toolbar-btn-active { background: var(--accent) !important; color: white !important; border-color: var(--accent) !important; }
+
+  /* ===== Thinking indicator ===== */
   .thinking-indicator {
     display: inline-flex; align-items: center; gap: 10px;
-    padding: 10px 14px;
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 18px 18px 18px 4px;
+    padding: 4px 0;
     width: fit-content;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
   }
-  .dark .thinking-indicator { background: #1e293b; border-color: #334155; }
   .thinking-dots { display: inline-flex; gap: 4px; align-items: center; }
   .thinking-dots span {
-    width: 7px; height: 7px; border-radius: 50%;
-    background: #fb923c;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
     animation: dot-bounce 1.4s infinite ease-in-out both;
   }
   .thinking-dots span:nth-child(1) { animation-delay: -0.32s; }
   .thinking-dots span:nth-child(2) { animation-delay: -0.16s; }
   @keyframes dot-bounce {
-    0%, 80%, 100% { transform: scale(0.55); opacity: 0.35; }
+    0%, 80%, 100% { transform: scale(0.5); opacity: 0.35; }
     40% { transform: scale(1); opacity: 1; }
   }
   .thinking-label {
-    font-size: 12px;
-    background: linear-gradient(90deg, #94a3b8 0%, #f97316 50%, #94a3b8 100%);
+    font-size: 12px; color: var(--text-muted);
+    background: linear-gradient(90deg, var(--text-subtle), var(--accent), var(--text-subtle));
     background-size: 200% auto;
-    -webkit-background-clip: text;
-    background-clip: text;
+    -webkit-background-clip: text; background-clip: text;
     -webkit-text-fill-color: transparent;
-    animation: shimmer 2s linear infinite;
+    animation: shimmer 2.5s linear infinite;
   }
-  @keyframes shimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .session-item.active { background:#fff7ed; border-color:#fdba74; }
-  .dark .session-item.active { background:#431407; border-color:#c2410c; }
-  /* hide scrollbars completely (keep scrolling functionality) */
-  * { scrollbar-width: none; -ms-overflow-style: none; }
-  *::-webkit-scrollbar { width: 0; height: 0; display: none; }
-  *::-webkit-scrollbar-track { background: transparent; }
-  *::-webkit-scrollbar-thumb { background: transparent; }
-  *::-webkit-scrollbar-corner { background: transparent; }
-  .copy-btn { position:absolute; top:6px; right:6px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); color:#e6edf3; padding:2px 8px; border-radius:4px; font-size:11px; cursor:pointer; opacity:0; transition:opacity .15s; }
-  .prose-custom pre:hover .copy-btn { opacity:1; }
-  .copy-btn:hover { background:rgba(255,255,255,0.2); }
-  .drag-active { outline: 2px dashed #fb923c; outline-offset: -2px; }
-  .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:50; display:flex; align-items:center; justify-content:center; padding:20px; }
-  .modal-box { background:white; border-radius:12px; max-width:560px; width:100%; max-height:90vh; overflow-y:auto; }
-  .modal-box.lg { max-width:720px; }
-  .dark .modal-box { background:#1e293b; color:#e2e8f0; }
-  .mermaid { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px; margin:8px 0; display:flex; justify-content:center; }
-  .dark .mermaid { background:#0f172a; border-color:#334155; }
-  .file-picker { position:absolute; bottom:100%; left:0; right:0; margin-bottom:8px; max-height:240px; overflow-y:auto; background:white; border:1px solid #d1d5db; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.1); z-index:40; }
-  .dark .file-picker { background:#1e293b; border-color:#475569; color:#e2e8f0; }
-  .file-picker .item { padding:6px 10px; cursor:pointer; font-size:13px; }
-  .file-picker .item:hover, .file-picker .item.sel { background:#fed7aa; }
-  .dark .file-picker .item:hover, .dark .file-picker .item.sel { background:#7c2d12; }
-  .lightbox { position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:100; display:flex; align-items:center; justify-content:center; cursor:zoom-out; }
-  .lightbox img { max-width:95%; max-height:95%; border-radius:4px; }
-  .tag-chip { display:inline-block; font-size:10px; padding:1px 6px; background:#fde68a; color:#713f12; border-radius:9999px; margin-right:4px; }
-  .dark .tag-chip { background:#78350f; color:#fef3c7; }
-  .url-chip { display:inline-flex; align-items:center; gap:6px; max-width:280px; padding:4px 10px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:10px; font-size:12px; }
-  .dark .url-chip { background:#1e293b; border-color:#334155; }
-  .url-chip.loading { border-color:#fdba74; }
-  .url-chip.error { background:#fef2f2; border-color:#fecaca; color:#991b1b; }
-  .dark .url-chip.error { background:#450a0a; border-color:#7f1d1d; color:#fca5a5; }
-  .url-chip .host { font-weight:500; }
-  .url-chip .meta { color:#64748b; font-size:10px; }
-  .url-chip .close { cursor:pointer; color:#94a3b8; margin-left:4px; }
-  .url-chip .close:hover { color:#ef4444; }
-  .toolbar-btn-active { background:#fb923c !important; color:#fff; }
-  .dark .toolbar-btn-active { background:#c2410c !important; color:#fff; }
-  .doc-chip { display:inline-flex; align-items:center; gap:6px; max-width:280px; padding:4px 10px; background:#ecfeff; border:1px solid #a5f3fc; border-radius:10px; font-size:12px; color:#155e75; }
-  .dark .doc-chip { background:#083344; border-color:#155e75; color:#a5f3fc; }
-  .doc-chip .close { cursor:pointer; color:#94a3b8; margin-left:4px; }
-  .doc-chip .close:hover { color:#ef4444; }
-  .run-btn { position:absolute; top:6px; right:60px; background:rgba(34,197,94,0.2); border:1px solid rgba(34,197,94,0.4); color:#86efac; padding:2px 8px; border-radius:4px; font-size:11px; cursor:pointer; opacity:0; transition:opacity .15s; }
-  .prose-custom pre:hover .run-btn { opacity:1; }
-  .run-btn:hover { background:rgba(34,197,94,0.35); }
-  .run-btn.running { background:rgba(251,146,60,0.3); border-color:rgba(251,146,60,0.5); color:#fdba74; opacity:1; }
-  .run-output { margin-top: 6px; padding: 8px 10px; background:#0f172a; border-radius:6px; font-size:12px; color:#e2e8f0; white-space:pre-wrap; overflow-x:auto; border-left:3px solid #22c55e; }
-  .run-output.error { border-left-color:#ef4444; }
-  .followup-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; padding-left:36px; }
-  .followup-chip { padding: 5px 12px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:9999px; font-size:12px; color:#475569; cursor:pointer; transition:all .15s; max-width:100%; }
-  .followup-chip:hover { background:#fed7aa; border-color:#fb923c; color:#9a3412; }
-  .dark .followup-chip { background:#1e293b; border-color:#334155; color:#cbd5e1; }
-  .dark .followup-chip:hover { background:#7c2d12; border-color:#c2410c; color:#fed7aa; }
-  .followup-loading { font-size:11px; color:#94a3b8; padding-left:36px; margin-top:4px; }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
-  /* TodoWrite live panel */
+  /* ===== Code block action buttons ===== */
+  .copy-btn, .run-btn {
+    position: absolute; top: 8px;
+    padding: 3px 10px; border-radius: 5px;
+    font-size: 11px; font-weight: 500;
+    cursor: pointer; opacity: 0; transition: opacity .15s, background .15s;
+    border: 1px solid rgba(255,255,255,0.15);
+  }
+  .copy-btn { right: 8px; background: rgba(255,255,255,0.08); color: #e6edf3; }
+  .copy-btn:hover { background: rgba(255,255,255,0.18); }
+  .run-btn { right: 62px; background: rgba(34,197,94,0.18); color: #86efac; border-color: rgba(34,197,94,0.3); }
+  .run-btn:hover { background: rgba(34,197,94,0.3); }
+  .run-btn.running { background: rgba(251,146,60,0.28); color: #fdba74; opacity: 1; }
+  .prose-custom pre:hover .copy-btn,
+  .prose-custom pre:hover .run-btn { opacity: 1; }
+
+  .run-output {
+    margin-top: 8px; padding: 10px 12px;
+    background: #0d1117; border-radius: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; color: #e2e8f0;
+    white-space: pre-wrap; overflow-x: auto;
+    border-left: 3px solid #22c55e;
+  }
+  .run-output.error { border-left-color: #ef4444; }
+
+  /* ===== Chips ===== */
+  .drag-active { outline: 2px dashed var(--accent); outline-offset: -2px; }
+  .tag-chip {
+    display: inline-block; font-size: 10px; padding: 1.5px 7px;
+    background: var(--accent-soft); color: var(--accent-hover);
+    border-radius: 9999px; margin-right: 4px; font-weight: 500;
+  }
+  .dark .tag-chip { color: var(--accent); }
+
+  .url-chip, .doc-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    max-width: 280px; padding: 5px 10px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 8px; font-size: 12px;
+  }
+  .url-chip.loading { border-color: var(--accent); }
+  .url-chip.error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+  .dark .url-chip.error { background: #450a0a; border-color: #7f1d1d; color: #fca5a5; }
+  .url-chip .meta, .doc-chip .meta { color: var(--text-subtle); font-size: 10px; }
+  .url-chip .close, .doc-chip .close { cursor: pointer; color: var(--text-subtle); margin-left: 4px; }
+  .url-chip .close:hover, .doc-chip .close:hover { color: #ef4444; }
+
+  /* ===== Followup chips ===== */
+  .followup-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; padding-left: 40px; }
+  .followup-chip {
+    padding: 6px 14px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 9999px; font-size: 12.5px; color: var(--text-muted);
+    cursor: pointer; transition: all .15s; max-width: 100%;
+  }
+  .followup-chip:hover {
+    background: var(--accent-soft); border-color: var(--accent);
+    color: var(--accent-hover); transform: translateY(-1px);
+  }
+  .followup-loading { font-size: 11px; color: var(--text-subtle); padding-left: 40px; margin-top: 6px; }
+
+  /* ===== Modal ===== */
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(28,25,23,.55); backdrop-filter: blur(4px);
+    z-index: 50; display: flex; align-items: center; justify-content: center;
+    padding: 20px; animation: fadeIn .15s ease-out;
+  }
+  .modal-box {
+    background: var(--surface); color: var(--text);
+    border-radius: 14px; max-width: 560px; width: 100%;
+    max-height: 90vh; overflow-y: auto;
+    box-shadow: var(--shadow-lg);
+    animation: slideUp .2s ease-out;
+  }
+  .modal-box.lg { max-width: 720px; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* ===== Mermaid ===== */
+  .mermaid {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; margin: 10px 0;
+    display: flex; justify-content: center;
+  }
+
+  /* ===== Media toolbar (Mermaid / images) ===== */
+  .mermaid-wrap, .img-wrap {
+    position: relative; display: block;
+    margin: 10px 0;
+  }
+  .img-wrap { display: inline-block; }
+  .mermaid-wrap .mermaid { margin: 0; }
+  .media-toolbar {
+    position: absolute; top: 8px; right: 8px;
+    display: flex; gap: 4px;
+    opacity: 0; transition: opacity .15s;
+    background: rgba(255,255,255,0.92); backdrop-filter: blur(8px);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 3px; box-shadow: var(--shadow-sm);
+  }
+  .dark .media-toolbar { background: rgba(28,25,23,0.92); }
+  .mermaid-wrap:hover .media-toolbar,
+  .img-wrap:hover .media-toolbar { opacity: 1; }
+  .media-toolbar button {
+    padding: 3px 8px; border-radius: 5px;
+    font-size: 11px; color: var(--text-muted);
+    background: transparent; border: none; cursor: pointer;
+    transition: background .1s, color .1s;
+  }
+  .media-toolbar button:hover { background: var(--surface-2); color: var(--text); }
+
+  /* ===== File picker ===== */
+  .file-picker {
+    position: absolute; bottom: 100%; left: 0; right: 0;
+    margin-bottom: 8px; max-height: 240px; overflow-y: auto;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: var(--shadow-lg); z-index: 40;
+  }
+  .file-picker .item { padding: 7px 12px; cursor: pointer; font-size: 13px; color: var(--text); }
+  .file-picker .item:hover, .file-picker .item.sel { background: var(--accent-soft); color: var(--accent-hover); }
+
+  /* ===== Lightbox ===== */
+  .lightbox {
+    position: fixed; inset: 0; background: rgba(0,0,0,.9);
+    z-index: 100; display: flex; align-items: center; justify-content: center;
+    cursor: zoom-out; backdrop-filter: blur(8px);
+  }
+  .lightbox img { max-width: 95%; max-height: 95%; border-radius: 8px; box-shadow: var(--shadow-lg); }
+
+  /* ===== TodoWrite panel ===== */
   .todo-panel {
-    position: fixed; top: 80px; right: 20px;
+    position: fixed; top: 76px; right: 20px;
     width: 320px; max-height: 60vh;
-    background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.12);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: var(--shadow-lg);
     z-index: 30;
     display: flex; flex-direction: column;
     overflow: hidden;
     transition: opacity .3s, transform .3s;
   }
-  .dark .todo-panel { background:#1e293b; border-color:#334155; }
   .todo-panel.hidden { display: none; }
   .todo-panel-header {
-    padding: 10px 14px;
-    background: linear-gradient(135deg, #fff7ed, #ffedd5);
-    border-bottom: 1px solid #fed7aa;
+    padding: 11px 14px;
+    background: linear-gradient(135deg, var(--accent-soft-2), var(--accent-soft));
+    border-bottom: 1px solid var(--border);
     display: flex; align-items: center; gap: 8px;
-    font-weight: 600; font-size: 13px; color: #9a3412;
+    font-weight: 600; font-size: 13px; color: var(--accent-hover);
   }
-  .dark .todo-panel-header { background: linear-gradient(135deg,#431407,#7c2d12); border-color:#9a3412; color:#fed7aa; }
-  .todo-progress-track { height: 3px; background:#fed7aa; }
-  .dark .todo-progress-track { background:#7c2d12; }
-  .todo-progress-fill { height: 100%; background:#f97316; transition: width .4s; }
-  .todo-panel-list { overflow-y:auto; padding: 6px 0; flex: 1; }
+  .todo-progress-track { height: 3px; background: var(--accent-soft); }
+  .todo-progress-fill { height: 100%; background: var(--accent); transition: width .4s; }
+  .todo-panel-list { overflow-y: auto; padding: 6px 0; flex: 1; }
   .todo-item {
-    padding: 6px 14px;
+    padding: 7px 14px;
     display: flex; align-items: flex-start; gap: 8px;
-    font-size: 13px; line-height: 1.45;
+    font-size: 13px; line-height: 1.5;
     border-left: 3px solid transparent;
   }
-  .todo-item.completed { color:#9ca3af; text-decoration: line-through; }
-  .todo-item.in_progress { background:#fef3c7; border-left-color:#f59e0b; font-weight: 500; }
-  .dark .todo-item.in_progress { background:#422006; }
+  .todo-item.completed { color: var(--text-subtle); text-decoration: line-through; }
+  .todo-item.in_progress { background: var(--accent-soft); border-left-color: var(--accent); font-weight: 500; color: var(--accent-hover); }
   .todo-icon { flex-shrink: 0; }
-  @media (max-width: 768px) {
-    .todo-panel { right: 10px; left: 10px; width: auto; top: 70px; }
+
+  /* ===== Empty state ===== */
+  .empty-hero {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 60vh; padding: 40px 20px; text-align: center;
+    animation: slideUp .3s ease-out;
   }
-  .sidebar-toggle { display:none; }
-  @media (max-width: 768px) {
-    #sidebar { position:fixed; left:-288px; top:0; bottom:0; z-index:30; transition:left .2s; box-shadow: 2px 0 10px rgba(0,0,0,0.1); }
-    #sidebar.open { left:0; }
-    .sidebar-toggle { display:inline-flex; }
-    #cwdInput { width:120px; }
-    #modelSelect { display:none; }
+  .empty-logo {
+    width: 64px; height: 64px; border-radius: 16px;
+    background: linear-gradient(135deg, #fb923c, #c2410c);
+    color: white; font-weight: 700; font-size: 28px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: var(--shadow-lg); margin-bottom: 20px;
+    position: relative;
   }
+  .empty-logo::after {
+    content: ''; position: absolute; inset: -8px;
+    border-radius: 20px; background: linear-gradient(135deg, #fb923c, #c2410c);
+    opacity: .15; filter: blur(16px); z-index: -1;
+  }
+  .empty-title { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 6px; }
+  .empty-subtitle { font-size: 14px; color: var(--text-muted); margin-bottom: 28px; }
+  .empty-cards {
+    display: grid; grid-template-columns: repeat(2, 1fr);
+    gap: 10px; max-width: 640px; width: 100%;
+  }
+  .empty-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 16px;
+    text-align: left; cursor: pointer;
+    transition: all .18s; box-shadow: var(--shadow-sm);
+  }
+  .empty-card:hover {
+    border-color: var(--accent); transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+  }
+  .empty-card-icon { font-size: 20px; margin-bottom: 6px; }
+  .empty-card-title { font-size: 13.5px; font-weight: 500; color: var(--text); margin-bottom: 3px; }
+  .empty-card-sub { font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+  @media (max-width: 640px) {
+    .empty-cards { grid-template-columns: 1fr; }
+  }
+
+  /* ===== Message enter animation ===== */
+  .msg-enter { animation: msgIn .25s ease-out; }
+  @keyframes msgIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* ===== Mobile sidebar ===== */
+  .sidebar-toggle { display: none; }
+  @media (max-width: 768px) {
+    #sidebar { position: fixed; left: -288px; top: 0; bottom: 0; z-index: 30; transition: left .2s; box-shadow: var(--shadow-lg); }
+    #sidebar.open { left: 0; }
+    .sidebar-toggle { display: inline-flex; }
+    .todo-panel { right: 10px; left: 10px; width: auto; top: 66px; }
+    .empty-cards { grid-template-columns: 1fr; }
+  }
+
+  /* ===== Utility: subtle divider ===== */
+  .divider { height: 1px; background: var(--border); }
+
+  /* ===== Select / Input refinement ===== */
+  select, input[type="text"], input[type="url"], input[type="number"], textarea {
+    background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; transition: border-color .15s, box-shadow .15s;
+  }
+  select:focus, input:focus, textarea:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(194,65,12,0.12);
+  }
+  .dark select:focus, .dark input:focus, .dark textarea:focus {
+    box-shadow: 0 0 0 3px rgba(251,146,60,0.15);
+  }
+
+  .spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--text-subtle); border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ===== ChatGPT-style composer ===== */
+  .composer {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    padding: 12px 14px 10px;
+    box-shadow: var(--shadow-md);
+    transition: border-color .15s, box-shadow .15s;
+    position: relative;
+  }
+  .composer:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(194,65,12,0.1), var(--shadow-md);
+  }
+  .dark .composer:focus-within {
+    box-shadow: 0 0 0 3px rgba(251,146,60,0.15), var(--shadow-md);
+  }
+  .composer-textarea {
+    width: 100%; background: transparent; border: none; outline: none;
+    resize: none; color: var(--text);
+    font-size: 15px; line-height: 1.6;
+    padding: 6px 6px; min-height: 32px; max-height: 280px;
+    font-family: inherit;
+    overflow-y: auto;
+    display: block;
+  }
+  .composer-textarea:focus { outline: none; box-shadow: none; }
+  .composer-textarea::placeholder { color: var(--text-subtle); }
+  .composer-actions {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 8px; padding: 0 2px;
+  }
+  .composer-btn {
+    width: 34px; height: 34px; border-radius: 10px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; color: var(--text-muted);
+    border: none; cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .composer-btn:hover { background: var(--surface-2); color: var(--text); }
+  .composer-btn.toolbar-btn-active { background: var(--accent-soft) !important; color: var(--accent) !important; border-color: transparent !important; }
+  .composer-btn-stop { background: #ef4444; color: white; }
+  .composer-btn-stop:hover { background: #dc2626; color: white; }
+  .composer-send {
+    width: 36px; height: 36px; border-radius: 10px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--text); color: var(--surface);
+    border: none; cursor: pointer;
+    transition: all .15s;
+  }
+  .composer-send:hover { background: var(--accent); color: white; transform: scale(1.03); }
+  .composer-send:disabled { background: var(--border-strong); color: var(--text-subtle); cursor: not-allowed; transform: none; }
+
+  /* ===== Sidebar icon button ===== */
+  .sb-icon-btn {
+    width: 28px; height: 28px; border-radius: 7px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: none; cursor: pointer;
+    color: var(--text-muted); font-size: 14px;
+    transition: background .15s, color .15s;
+  }
+  .sb-icon-btn:hover { background: var(--border); color: var(--text); }
+
+  /* ===== Tab buttons ===== */
+  .tab-btn {
+    font-family: inherit; font-size: inherit; font-weight: inherit;
+    background: transparent; border: none; cursor: pointer;
+    padding: 0;
+  }
+  .tab-btn:hover { color: var(--text) !important; }
+
+  /* Select cleanup (header) */
+  header select, #advancedBar select {
+    cursor: pointer;
+  }
+  header select:hover { background: var(--surface-2); }
+
+  /* Session list items - slimmer, no big borders */
+  .session-item {
+    padding: 7px 10px; border-radius: 6px; margin-bottom: 1px;
+    cursor: pointer;
+    transition: background .12s;
+    border-left: 2px solid transparent;
+  }
+  .session-item:hover { background: var(--border); }
+  .session-item.active { background: var(--accent-soft-2); border-left-color: var(--accent); }
+  .dark .session-item.active { background: var(--accent-soft); }
 </style>
 </head>
-<body class="bg-gray-50 dark:bg-slate-900 h-screen flex text-gray-900 dark:text-gray-100">
+<body class="h-screen flex">
 
 <!-- Sidebar -->
-<aside id="sidebar" class="w-72 bg-white dark:bg-slate-800 border-r border-gray-200 dark:border-slate-700 flex flex-col flex-shrink-0">
-  <div class="px-4 py-3 border-b border-gray-200 dark:border-slate-700 flex items-center justify-between">
+<aside id="sidebar" class="w-64 flex flex-col flex-shrink-0" style="background:var(--surface-2);">
+  <div class="px-3 pt-3 pb-2 flex items-center justify-between">
     <div class="flex items-center gap-2 min-w-0">
-      <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">C</div>
-      <div class="font-semibold text-sm truncate">Claude Code Web</div>
+      <div class="avatar" style="width:26px; height:26px; border-radius:7px; font-size:11px;">C</div>
+      <div class="font-semibold text-[13px] truncate" style="letter-spacing:-0.01em;">Claude Code Web</div>
     </div>
-    <button id="themeBtn" class="text-lg hover:opacity-70" title="切换主题">🌙</button>
+    <button id="themeBtn" class="sb-icon-btn" title="切换主题">🌙</button>
   </div>
 
-  <div class="p-2 space-y-2">
-    <button id="newSession" class="w-full px-3 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2" title="新会话 (⌘N)">
-      <span>＋</span> 新会话
+  <div class="px-2 space-y-1.5">
+    <button id="newSession" class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors" style="background:var(--surface); border:1px solid var(--border); color:var(--text);" title="新会话 (⌘N)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <span>新会话</span>
     </button>
-    <input id="searchInput" type="text" placeholder="🔍 搜索 (⌘K)"
-      class="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-slate-600 dark:bg-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400" />
-    <div class="flex gap-2 text-xs">
-      <button id="viewActive" class="tab-btn flex-1 py-1 rounded bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-200">活跃</button>
-      <button id="viewArchived" class="tab-btn flex-1 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-700">归档</button>
+    <div class="relative">
+      <input id="searchInput" type="text" placeholder="搜索"
+        class="w-full pl-8 pr-3 py-1.5 text-[13px]" style="background:transparent; border:1px solid transparent;" />
+      <span style="position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--text-subtle); font-size:11px;">🔍</span>
     </div>
-    <div id="tagFilter" class="text-xs hidden"></div>
   </div>
 
-  <div class="flex-1 overflow-y-auto scrollbar-thin px-2 pb-2" id="sessionList">
-    <div class="text-xs text-gray-400 text-center py-4">加载中...</div>
+  <div class="px-3 pt-3 pb-1 flex items-center gap-3 text-[11px] uppercase tracking-wider" style="color:var(--text-subtle); font-weight:600;">
+    <button id="viewActive" class="tab-btn transition-colors" style="color:var(--text);">活跃</button>
+    <button id="viewArchived" class="tab-btn transition-colors" style="color:var(--text-subtle);">归档</button>
+  </div>
+  <div id="tagFilter" class="px-3 text-xs hidden"></div>
+
+  <div class="flex-1 overflow-y-auto px-2 py-1" id="sessionList">
+    <div class="text-xs text-center py-6" style="color:var(--text-subtle);">加载中...</div>
   </div>
 
-  <div class="border-t border-gray-200 dark:border-slate-700">
-    <div class="px-3 py-2 flex items-center justify-between text-xs">
-      <span class="font-semibold text-gray-600 dark:text-gray-300">⭐ 提示词模板</span>
-      <button id="managePrompts" class="text-orange-600 hover:text-orange-700">管理</button>
+  <div class="pt-2 pb-1 px-2" style="border-top:1px solid var(--border);">
+    <div class="px-2 py-1 flex items-center justify-between text-[11px] uppercase tracking-wider" style="color:var(--text-subtle); font-weight:600;">
+      <span>提示词模板</span>
+      <button id="managePrompts" class="normal-case tracking-normal hover:underline text-[11px]" style="color:var(--accent); font-weight:500;">管理</button>
     </div>
-    <div id="promptList" class="px-2 pb-2 max-h-40 overflow-y-auto scrollbar-thin space-y-1"></div>
+    <div id="promptList" class="max-h-36 overflow-y-auto space-y-0.5 py-1"></div>
   </div>
 
-  <div class="border-t border-gray-200 dark:border-slate-700 px-3 py-2 text-xs text-gray-500 dark:text-gray-400 flex items-center justify-between">
-    <button id="statsBar" class="hover:text-gray-800 dark:hover:text-white" title="查看统计">💰 $0.00</button>
-    <button id="settingsBtn" class="hover:text-gray-800 dark:hover:text-white">⚙️ 设置</button>
+  <div class="px-3 py-2.5 text-[12px] flex items-center justify-between gap-2" style="border-top:1px solid var(--border); color:var(--text-muted);">
+    <button id="statsBar" class="hover:underline flex items-center gap-1" style="color:var(--text);" title="查看统计">💰 $0.00</button>
+    <button id="settingsBtn" class="hover:underline flex items-center gap-1" style="color:var(--text);">⚙️ 设置</button>
   </div>
 </aside>
 
 <!-- Main -->
-<div class="flex-1 flex flex-col min-w-0">
-  <header class="bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 px-3 py-3 flex items-center justify-between shadow-sm gap-2">
+<div class="flex-1 flex flex-col min-w-0" style="background:var(--bg);">
+  <header class="px-4 py-2.5 flex items-center justify-between gap-3" style="background:var(--bg); border-bottom:1px solid var(--border);">
     <div class="flex items-center gap-2 min-w-0">
-      <button id="toggleSidebar" class="sidebar-toggle text-xl px-2">☰</button>
-      <div class="min-w-0">
-        <div class="font-semibold truncate flex items-center gap-2" id="titleRow">
-          <span id="titleLabel">新会话</span>
-          <button id="suggestTitleBtn" class="text-xs text-orange-500 hover:text-orange-700 hidden" title="让 Claude 自动命名">🪄</button>
-        </div>
-        <div class="text-xs text-gray-500 dark:text-gray-400 truncate flex items-center gap-2" id="sessionLabel">
-          <span id="sessionIdText">尚未开始</span>
-          <span id="gitBar" class="hidden text-emerald-600 dark:text-emerald-400"></span>
-        </div>
+      <button id="toggleSidebar" class="sidebar-toggle text-xl px-1" style="color:var(--text-muted);">☰</button>
+      <div class="min-w-0 flex items-center gap-2">
+        <span id="titleLabel" class="font-medium truncate" style="letter-spacing:-0.01em; font-size:14.5px;">新会话</span>
+        <button id="suggestTitleBtn" class="text-sm hidden opacity-60 hover:opacity-100" style="color:var(--accent);" title="让 Claude 自动命名">🪄</button>
+        <span class="text-[11px] truncate flex items-center gap-2" id="sessionLabel" style="color:var(--text-subtle);">
+          <span id="sessionIdText" class="hidden"></span>
+          <span id="gitBar" class="hidden" style="color:#10b981;"></span>
+        </span>
       </div>
     </div>
-    <div class="flex items-center gap-2 flex-shrink-0">
-      <div class="relative">
-        <input id="cwdInput" list="cwdList" placeholder="工作目录" class="text-xs px-2 py-1 border border-gray-300 dark:border-slate-600 dark:bg-slate-700 rounded w-60" />
-        <datalist id="cwdList"></datalist>
-      </div>
-      <select id="modelSelect" class="text-xs px-2 py-1 border border-gray-300 dark:border-slate-600 dark:bg-slate-700 rounded">
+    <div class="flex items-center gap-1 flex-shrink-0">
+      <select id="modelSelect" class="text-[12px] px-2.5 py-1" title="模型" style="border:1px solid transparent; background:transparent;">
         <option value="">默认模型</option>
         <option value="opus">Opus</option>
         <option value="sonnet">Sonnet</option>
         <option value="haiku">Haiku</option>
       </select>
-      <select id="permSelect" class="text-xs px-2 py-1 border border-gray-300 dark:border-slate-600 dark:bg-slate-700 rounded" title="工具权限策略">
-        <option value="free">🔓 自由</option>
-        <option value="acceptEdits">✏️ 允许编辑</option>
-        <option value="plan">📋 计划</option>
-        <option value="readonly">🔒 只读</option>
-        <option value="custom">⚙️ 自定义</option>
-      </select>
-      <button id="exportBtn" title="导出 Markdown"
-        class="text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 rounded">📥</button>
+      <button id="headerMoreBtn" class="sb-icon-btn" title="工作目录 / 权限策略">⋯</button>
+      <button id="exportBtn" class="sb-icon-btn" title="导出 Markdown">📥</button>
     </div>
   </header>
 
-  <main id="chat" class="flex-1 overflow-y-auto px-5 py-6 space-y-4 max-w-4xl w-full mx-auto scrollbar-thin">
-    <div class="text-center text-gray-400 text-sm mt-10" id="welcome">
-      <div class="text-4xl mb-3">💬</div>
-      <div>开始和 Claude Code 对话吧</div>
-      <div class="text-xs mt-2">支持粘贴/拖拽图片 · @ 引用文件 · Mermaid / LaTeX 渲染</div>
-      <div class="text-xs mt-1 text-gray-500">快捷键：⌘K 搜索 · ⌘N 新会话 · Esc 关闭弹窗</div>
+  <!-- Advanced toolbar (toggled by headerMoreBtn) -->
+  <div id="advancedBar" class="hidden px-4 py-2 flex items-center gap-2 flex-wrap" style="background:var(--surface-2); border-bottom:1px solid var(--border);">
+    <div class="relative flex-1 min-w-[240px]">
+      <input id="cwdInput" list="cwdList" placeholder="工作目录（留空默认 ~）" class="text-xs px-2.5 py-1.5 w-full" />
+      <datalist id="cwdList"></datalist>
+    </div>
+    <select id="permSelect" class="text-xs px-2.5 py-1.5" title="工具权限策略">
+      <option value="free">🔓 自由</option>
+      <option value="acceptEdits">✏️ 允许编辑</option>
+      <option value="plan">📋 计划</option>
+      <option value="readonly">🔒 只读</option>
+      <option value="custom">⚙️ 自定义</option>
+    </select>
+  </div>
+
+  <main id="chat" class="flex-1 overflow-y-auto w-full" style="background:var(--bg);">
+    <div class="max-w-3xl w-full mx-auto px-6 py-8" id="chatInner">
+    <div id="welcome" class="empty-hero">
+      <div class="empty-logo">C</div>
+      <div class="empty-title">Claude Code Web</div>
+      <div class="empty-subtitle">Claude Code CLI 的可视化界面 · 支持工具可视化、Git 回滚、会话分叉</div>
+      <div class="empty-cards">
+        <div class="empty-card" data-prompt="帮我审查当前目录的代码质量，重点关注：代码风格、潜在 bug、安全问题。请先用 Glob 列出所有源文件。">
+          <div class="empty-card-icon">🔍</div>
+          <div class="empty-card-title">代码审查</div>
+          <div class="empty-card-sub">扫描当前目录 · 列出改进建议</div>
+        </div>
+        <div class="empty-card" data-prompt="解释一下 Python 的装饰器，配合代码示例说明常见用法。">
+          <div class="empty-card-icon">📚</div>
+          <div class="empty-card-title">技术解释</div>
+          <div class="empty-card-sub">深入讲解某个技术概念</div>
+        </div>
+        <div class="empty-card" data-prompt="帮我写一个命令行工具，功能是：读取目录下的所有 markdown 文件，统计总字数。要求用 Python 实现，含参数解析和错误处理。">
+          <div class="empty-card-icon">🛠️</div>
+          <div class="empty-card-title">写个小工具</div>
+          <div class="empty-card-sub">快速搭建一个脚本</div>
+        </div>
+        <div class="empty-card" data-prompt="用 Mermaid 画一个 HTTP 请求从浏览器到后端的完整流程图，包括 DNS、TCP、TLS、服务器处理、数据库查询。">
+          <div class="empty-card-icon">📊</div>
+          <div class="empty-card-title">画个流程图</div>
+          <div class="empty-card-sub">Mermaid 图表可视化</div>
+        </div>
+      </div>
+      <div class="text-xs mt-8" style="color:var(--text-subtle);">快捷键：⌘K 搜索 · ⌘N 新会话 · Esc 关闭</div>
+    </div>
     </div>
   </main>
 
-  <div id="urlChips" class="hidden bg-white dark:bg-slate-800 border-t border-gray-200 dark:border-slate-700 px-4 pt-2 pb-1 max-w-4xl mx-auto w-full flex flex-wrap gap-2"></div>
-  <div id="docChips" class="hidden bg-white dark:bg-slate-800 border-t border-gray-200 dark:border-slate-700 px-4 pt-2 pb-1 max-w-4xl mx-auto w-full flex flex-wrap gap-2"></div>
-  <div id="attachments" class="hidden bg-white dark:bg-slate-800 border-t border-gray-200 dark:border-slate-700 px-4 pt-3 pb-1 max-w-4xl mx-auto w-full flex flex-wrap gap-2"></div>
+  <div id="urlChips" class="hidden px-4 pt-3 pb-1 max-w-3xl mx-auto w-full flex flex-wrap gap-2" style="background:var(--surface);"></div>
+  <div id="docChips" class="hidden px-4 pt-3 pb-1 max-w-3xl mx-auto w-full flex flex-wrap gap-2" style="background:var(--surface);"></div>
+  <div id="attachments" class="hidden px-4 pt-3 pb-1 max-w-3xl mx-auto w-full flex flex-wrap gap-2" style="background:var(--surface);"></div>
 
-  <button id="jumpBottomBtn" class="hidden fixed bottom-24 right-6 px-3 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full shadow-lg text-sm flex items-center gap-2 z-20">
-    <span>↓</span><span>最新</span><span id="jumpBottomBadge" class="hidden text-xs bg-white text-orange-600 rounded-full px-1.5">0</span>
+  <button id="jumpBottomBtn" class="hidden fixed bottom-28 right-6 btn btn-primary text-sm z-20" style="border-radius:9999px; padding:8px 14px; box-shadow:var(--shadow-lg);">
+    <span>↓</span><span>最新</span><span id="jumpBottomBadge" class="hidden text-xs rounded-full px-1.5" style="background:white; color:var(--accent);">0</span>
   </button>
 
-  <footer class="bg-white dark:bg-slate-800 border-t border-gray-200 dark:border-slate-700 p-3">
-    <form id="form" class="max-w-4xl mx-auto flex gap-2 items-end relative">
+  <footer class="px-4 pt-2 pb-5" style="background:var(--bg);">
+    <form id="form" class="max-w-3xl mx-auto relative">
       <input type="file" id="fileInput" accept="image/*" multiple class="hidden" />
       <input type="file" id="docInput" accept=".pdf,.docx,.csv,.tsv,.txt,.md,.json,.log" multiple class="hidden" />
-      <button type="button" id="attachBtn" title="上传图片 (支持粘贴/拖拽)"
-        class="px-3 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 rounded-lg">📎</button>
-      <button type="button" id="docAttachBtn" title="上传文档 (PDF/Word/CSV/TXT/MD)"
-        class="px-3 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 rounded-lg">📄</button>
-      <button type="button" id="webSearchBtn" title="联网搜索：开启后 Claude 会优先用 WebSearch / WebFetch 获取最新信息"
-        class="px-3 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 rounded-lg">🌐</button>
-      <div class="flex-1 relative">
-        <textarea id="input" rows="2" placeholder="输入消息...  (Enter 发送, Shift+Enter 换行, @ 引用文件)"
-          class="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 dark:bg-slate-700 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-orange-400"></textarea>
-        <div id="tokenCounter" class="absolute right-2 bottom-1 text-[10px] text-gray-400">0 tokens</div>
+      <div class="composer" id="composer">
+        <textarea id="input" rows="1" placeholder="输入消息，让 Claude 帮你..."
+          class="composer-textarea"></textarea>
+        <div class="composer-actions">
+          <div class="flex items-center gap-1.5">
+            <button type="button" id="attachBtn" class="composer-btn" title="上传图片 (支持粘贴/拖拽)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 12-8.5 8.5a5 5 0 0 1-7-7L13 5a3.5 3.5 0 0 1 5 5L9.5 18.5a2 2 0 0 1-3-3L15 7"/></svg>
+            </button>
+            <button type="button" id="docAttachBtn" class="composer-btn" title="上传文档 (PDF/Word/CSV/TXT/MD)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            </button>
+            <button type="button" id="webSearchBtn" class="composer-btn" title="联网搜索">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            </button>
+            <div id="tokenCounter" class="text-[10px] ml-1" style="color:var(--text-subtle);">0 tokens</div>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <button type="button" id="stopBtn" class="hidden composer-btn composer-btn-stop" title="停止">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+            </button>
+            <button type="submit" id="send" class="composer-send" title="发送 (Enter)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+            </button>
+          </div>
+        </div>
         <div id="filePicker" class="file-picker hidden"></div>
       </div>
-      <button type="button" id="stopBtn" class="hidden px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium">⏹</button>
-      <button type="submit" id="send" class="px-5 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-medium disabled:opacity-50">发送</button>
+      <div class="text-center text-[11px] mt-2" style="color:var(--text-subtle);">
+        Claude 可能会出错，重要信息请核实
+      </div>
     </form>
   </footer>
 </div>
@@ -467,7 +866,7 @@ let lastUserIndex = -1;
 
 // ===== dom refs =====
 const $ = (id) => document.getElementById(id);
-const chatEl = $('chat'), form = $('form'), input = $('input'), sendBtn = $('send'), stopBtn = $('stopBtn');
+const chatEl = $('chat'), chatInner = $('chatInner'), form = $('form'), input = $('input'), sendBtn = $('send'), stopBtn = $('stopBtn');
 const sessionLabel = $('sessionIdText'), titleLabel = $('titleLabel');
 const cwdInput = $('cwdInput'), cwdList = $('cwdList');
 const newSessionBtn = $('newSession'), welcome = $('welcome');
@@ -588,10 +987,15 @@ function postProcessRendered(container) {
     const cls = code.className || '';
     if (/language-mermaid/i.test(cls)) {
       const src = code.textContent || '';
+      const wrap = document.createElement('div');
+      wrap.className = 'mermaid-wrap';
+      wrap.dataset.source = src;
       const div = document.createElement('div');
       div.className = 'mermaid';
       div.textContent = src;
-      code.parentElement.replaceWith(div);
+      wrap.appendChild(div);
+      wrap.appendChild(buildMediaToolbar('mermaid'));
+      code.parentElement.replaceWith(wrap);
     }
   });
   if (window.mermaid) {
@@ -610,8 +1014,117 @@ function postProcessRendered(container) {
     } catch (e) { console.warn(e); }
   }
   container.querySelectorAll('img').forEach(img => {
+    if (img.closest('.img-wrap')) return;
+    const wrap = document.createElement('span');
+    wrap.className = 'img-wrap';
+    img.parentElement.insertBefore(wrap, img);
+    wrap.appendChild(img);
+    wrap.appendChild(buildMediaToolbar('image'));
     img.addEventListener('click', () => openLightbox(img.src));
   });
+}
+
+function buildMediaToolbar(kind) {
+  const bar = document.createElement('div');
+  bar.className = 'media-toolbar';
+  const btns = [];
+  if (kind === 'mermaid') {
+    btns.push({ t: '⬇️ SVG', fn: (host) => downloadMermaidSvg(host) });
+    btns.push({ t: '⬇️ PNG', fn: (host) => downloadMermaidPng(host) });
+    btns.push({ t: '📋 源码', fn: (host) => copyMermaidSource(host) });
+  } else {
+    btns.push({ t: '⬇️ 下载', fn: (host) => downloadImage(host) });
+    btns.push({ t: '📋 复制', fn: (host) => copyImage(host) });
+  }
+  btns.forEach(({ t, fn }) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = t;
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      fn(bar.parentElement);
+      const orig = b.textContent;
+      b.textContent = '✓';
+      setTimeout(() => b.textContent = orig, 1200);
+    });
+    bar.appendChild(b);
+  });
+  return bar;
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function downloadMermaidSvg(host) {
+  const svg = host.querySelector('svg');
+  if (!svg) return;
+  const clone = svg.cloneNode(true);
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  const xml = new XMLSerializer().serializeToString(clone);
+  const blob = new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n', xml], { type: 'image/svg+xml' });
+  downloadBlob(blob, `diagram-${Date.now()}.svg`);
+}
+
+async function downloadMermaidPng(host) {
+  const svg = host.querySelector('svg');
+  if (!svg) return;
+  const clone = svg.cloneNode(true);
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  const vb = svg.viewBox?.baseVal;
+  const w = (vb?.width || svg.clientWidth || 800);
+  const h = (vb?.height || svg.clientHeight || 600);
+  const xml = new XMLSerializer().serializeToString(clone);
+  const blob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+  const scale = 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = w * scale;
+  canvas.height = h * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = settings.theme === 'dark' ? '#1c1917' : '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  URL.revokeObjectURL(url);
+  canvas.toBlob(b => { if (b) downloadBlob(b, `diagram-${Date.now()}.png`); }, 'image/png');
+}
+
+function copyMermaidSource(host) {
+  const src = host.dataset.source || '';
+  navigator.clipboard.writeText(src);
+}
+
+function downloadImage(host) {
+  const img = host.querySelector('img');
+  if (!img) return;
+  const a = document.createElement('a');
+  a.href = img.src;
+  a.download = (img.alt || 'image') + '.png';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+async function copyImage(host) {
+  const img = host.querySelector('img');
+  if (!img) return;
+  try {
+    const resp = await fetch(img.src);
+    const blob = await resp.blob();
+    await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+  } catch (e) {
+    await navigator.clipboard.writeText(img.src);
+  }
 }
 
 // ===== lightbox =====
@@ -630,45 +1143,45 @@ function addUserMessage(text, images, opts) {
   lastUserIndex = userIdx;
   removeWelcome();
   const el = document.createElement('div');
-  el.className = 'flex justify-end user-msg-wrap';
+  el.className = 'flex justify-end user-msg-wrap msg-enter';
   el.dataset.userIndex = String(userIdx);
   const imagesHtml = (images && images.length) ? `
     <div class="flex flex-wrap gap-2 justify-end mb-1">
-      ${images.map(p => `<img src="/uploads/${encodeURIComponent(pathBasename(p))}" class="max-w-[180px] max-h-[180px] rounded-lg border dark:border-slate-600 cursor-zoom-in" data-lightbox />`).join('')}
+      ${images.map(p => `<img src="/uploads/${encodeURIComponent(pathBasename(p))}" class="max-w-[180px] max-h-[180px] rounded-lg cursor-zoom-in" style="border:1px solid var(--border);" data-lightbox />`).join('')}
     </div>` : '';
   el.innerHTML = `
-    <div class="max-w-[80%] group relative user-msg-bubble" data-user-index="${userIdx}">
+    <div class="max-w-[75%] group relative user-msg-bubble" data-user-index="${userIdx}">
       ${imagesHtml}
-      <div class="bg-orange-500 text-white px-4 py-2 rounded-2xl rounded-br-md whitespace-pre-wrap break-words user-msg-text">${escapeHtml(text)}</div>
-      <div class="user-msg-actions absolute -left-24 top-2 opacity-0 group-hover:opacity-100 flex flex-col gap-1 text-xs text-gray-400">
+      <div class="bubble-user user-msg-text">${escapeHtml(text)}</div>
+      <div class="user-msg-actions absolute -left-24 top-2 opacity-0 group-hover:opacity-100 flex flex-col gap-1 text-xs" style="color:var(--text-subtle);">
         <button data-copy="${encodeURIComponent(text)}" title="复制" class="hover:text-gray-700 dark:hover:text-gray-200">📋</button>
-        <button data-edit="${userIdx}" title="编辑并重新提问" class="hover:text-blue-500">✏️</button>
+        <button data-edit="${userIdx}" title="编辑并留在当前对话" class="hover:text-blue-500">✏️</button>
         ${hasCheckpoint ? `<button data-restore="${userIdx}" title="回滚此轮前的文件状态" class="hover:text-amber-500">⏪</button>` : ''}
       </div>
     </div>
   `;
   el.querySelectorAll('[data-lightbox]').forEach(img => img.addEventListener('click', () => openLightbox(img.src)));
-  chatEl.appendChild(el);
+  chatInner.appendChild(el);
   forceScrollBottom();
 }
 
 function newAssistantBubble() {
   removeWelcome();
   const wrap = document.createElement('div');
-  wrap.className = 'flex gap-2 items-start asst-wrap group relative';
+  wrap.className = 'flex gap-3 items-start asst-wrap group relative msg-enter';
   wrap.dataset.userIndex = String(lastUserIndex);
   wrap.innerHTML = `
-    <div class="w-7 h-7 rounded-full bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">C</div>
+    <div class="avatar">C</div>
     <div class="flex-1 min-w-0 space-y-2"></div>
-    <button data-regen="${lastUserIndex}" title="重新生成此条回答" class="absolute -right-6 top-2 opacity-0 group-hover:opacity-100 text-xs text-gray-400 hover:text-blue-500">🔄</button>
+    <button data-regen="${lastUserIndex}" title="重新生成此条回答" class="absolute -right-6 top-2 opacity-0 group-hover:opacity-100 text-xs hover:text-blue-500" style="color:var(--text-subtle);">🔄</button>
   `;
-  chatEl.appendChild(wrap);
+  chatInner.appendChild(wrap);
   return wrap.querySelector('div.flex-1');
 }
 
 function addTextBlock(container, text) {
   const block = document.createElement('div');
-  block.className = 'prose-custom bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 px-4 py-2 rounded-2xl rounded-tl-md relative group';
+  block.className = 'prose-custom bubble-asst relative group';
   block.innerHTML = marked.parse(text)
     + `<button data-copy="${encodeURIComponent(text)}" class="absolute top-2 right-2 text-xs text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 opacity-0 group-hover:opacity-100" title="复制全文">📋</button>`;
   block.querySelectorAll('pre').forEach(pre => {
@@ -833,13 +1346,13 @@ function addSystemInfo(text) {
   const el = document.createElement('div');
   el.className = 'text-center text-xs text-gray-400 py-1';
   el.textContent = text;
-  chatEl.appendChild(el);
+  chatInner.appendChild(el);
 }
 function addErrorBlock(message) {
   const el = document.createElement('div');
   el.className = 'bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-900 text-red-800 dark:text-red-300 px-3 py-2 rounded-lg text-sm';
   el.textContent = '错误: ' + message;
-  chatEl.appendChild(el);
+  chatInner.appendChild(el);
 }
 
 // ===== TodoWrite live panel =====
@@ -955,10 +1468,6 @@ function handleEvent(obj, container) {
   if (obj.type === 'done') return container;
   if (obj.type === 'raw') { addSystemInfo(obj.text); return container; }
   if (obj.type === 'system' && obj.subtype === 'init') {
-    if (obj.session_id) {
-      sessionId = obj.session_id;
-      sessionLabel.textContent = '会话 ' + sessionId.slice(0, 8);
-    }
     return container;
   }
   if (obj.type === 'system' && (obj.subtype === 'hook_started' || obj.subtype === 'hook_response' || obj.subtype === 'status')) {
@@ -1023,7 +1532,7 @@ function handleStreamEvent(ev, container) {
     if (block.type === 'text') {
       hideThinking(state.container);
       const el = document.createElement('div');
-      el.className = 'prose-custom bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 px-4 py-2 rounded-2xl rounded-tl-md relative group whitespace-pre-wrap break-words';
+      el.className = 'prose-custom bubble-asst relative group whitespace-pre-wrap break-words';
       state.container.appendChild(el);
       state.blocks[idx] = { type: 'text', el, text: '' };
     } else if (block.type === 'thinking') {
@@ -1129,7 +1638,7 @@ document.addEventListener('click', (e) => {
 
 // ===== helpers for user-msg DOM =====
 function markLastUserMessageCheckpoint(userIdx) {
-  const wrap = chatEl.querySelector(`.user-msg-wrap[data-user-index="${userIdx}"]`);
+  const wrap = chatInner.querySelector(`.user-msg-wrap[data-user-index="${userIdx}"]`);
   if (!wrap) return;
   const actions = wrap.querySelector('.user-msg-actions');
   if (!actions || actions.querySelector('[data-restore]')) return;
@@ -1142,7 +1651,7 @@ function markLastUserMessageCheckpoint(userIdx) {
 }
 
 function startEditUserMessage(userIdx) {
-  const wrap = chatEl.querySelector(`.user-msg-wrap[data-user-index="${userIdx}"]`);
+  const wrap = chatInner.querySelector(`.user-msg-wrap[data-user-index="${userIdx}"]`);
   if (!wrap) return;
   const textEl = wrap.querySelector('.user-msg-text');
   if (!textEl) return;
@@ -1154,7 +1663,7 @@ function startEditUserMessage(userIdx) {
   const btns = document.createElement('div');
   btns.className = 'mt-2 flex gap-2 justify-end';
   btns.innerHTML = `
-    <button data-save-edit class="px-3 py-1 bg-orange-500 hover:bg-orange-600 text-white rounded text-xs">保存并重新提问</button>
+    <button data-save-edit class="px-3 py-1 bg-orange-500 hover:bg-orange-600 text-white rounded text-xs">保存并继续</button>
     <button data-cancel-edit class="px-3 py-1 bg-gray-200 dark:bg-slate-600 rounded text-xs">取消</button>
   `;
   textEl.replaceWith(ta);
@@ -1164,21 +1673,49 @@ function startEditUserMessage(userIdx) {
 
   btns.querySelector('[data-cancel-edit]').addEventListener('click', () => {
     const span = document.createElement('div');
-    span.className = 'bg-orange-500 text-white px-4 py-2 rounded-2xl rounded-br-md whitespace-pre-wrap break-words user-msg-text';
+    span.className = 'bubble-user user-msg-text';
     span.textContent = original;
     ta.replaceWith(span);
     btns.remove();
   });
-  btns.querySelector('[data-save-edit]').addEventListener('click', () => {
+  btns.querySelector('[data-save-edit]').addEventListener('click', async () => {
     const newText = ta.value.trim();
     if (!newText) { alert('不能为空'); return; }
     btns.remove();
     const span = document.createElement('div');
-    span.className = 'bg-orange-500 text-white px-4 py-2 rounded-2xl rounded-br-md whitespace-pre-wrap break-words user-msg-text';
+    span.className = 'bubble-user user-msg-text';
     span.textContent = newText;
     ta.replaceWith(span);
-    forkAndChat(sessionId, userIdx, newText);
+    await editInPlaceAndChat(sessionId, userIdx, newText);
   });
+}
+
+async function editInPlaceAndChat(targetSessionId, userIdx, newText) {
+  if (!targetSessionId) { alert('当前没有会话'); return; }
+  if (currentController) {
+    alert('请先等待当前回复完成，或先停止当前生成，再编辑历史消息。');
+    return;
+  }
+  try {
+    const r = await fetch(`/api/sessions/${targetSessionId}/prepare-inline-edit`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ event_index: userIdx, new_text: newText }),
+    });
+    if (!r.ok) {
+      const msg = await r.text();
+      alert('编辑失败: ' + msg);
+      await loadSession(targetSessionId);
+      return;
+    }
+    const data = await r.json();
+    if (data.cwd) cwdInput.value = data.cwd;
+    await loadSession(targetSessionId);
+    await sendRaw(data.sent_message, data.display_message, data.images || []);
+  } catch (e) {
+    alert('出错: ' + e.message);
+    try { await loadSession(targetSessionId); } catch {}
+  }
 }
 
 async function forkAndChat(fromSession, userIdx, newText) {
@@ -1376,13 +1913,14 @@ async function send(message) {
   return sendCore(message, null, pendingImages.map(i => i.path));
 }
 
-async function sendRaw(sentMessage, displayMessage) {
-  // used by fork flow; no images, no pending list
-  return sendCore(sentMessage, displayMessage, []);
+async function sendRaw(sentMessage, displayMessage, imagePaths = []) {
+  // Used by fork/edit flows: start a brand-new Claude session with the current local session ID.
+  return sendCore(sentMessage, displayMessage, imagePaths, { forceNew: true });
 }
 
-async function sendCore(message, displayMessage, imagePaths) {
+async function sendCore(message, displayMessage, imagePaths, options = {}) {
   const isFork = !!displayMessage;
+  const forceNew = options.forceNew === true;
 
   // Gemini-style: fetch detected URLs at send time
   if (!isFork && urlContext.size > 0) {
@@ -1441,6 +1979,7 @@ async function sendCore(message, displayMessage, imagePaths) {
         permission_mode: perm.permission_mode,
         allowed_tools: perm.allowed_tools,
         disallowed_tools: perm.disallowed_tools,
+        force_new: forceNew || null,
       }),
       signal: currentController.signal,
     });
@@ -1498,6 +2037,7 @@ form.addEventListener('submit', (e) => {
   if (!text && pendingImages.length === 0) return;
   input.value = '';
   updateTokenCount();
+  autosizeTextarea();
   send(text || '（仅图片）');
 });
 
@@ -1515,11 +2055,16 @@ input.addEventListener('keydown', (e) => {
     form.requestSubmit();
   }
 });
+function autosizeTextarea() {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 280) + 'px';
+}
 input.addEventListener('input', () => {
   updateTokenCount();
   saveDraft();
   maybeShowPicker();
   scheduleUrlDetect();
+  autosizeTextarea();
 });
 
 // ===== sessions sidebar =====
@@ -1530,8 +2075,8 @@ function startNewSession() {
   titleLabel.textContent = '新会话';
   sessionLabel.textContent = '尚未开始';
   suggestTitleBtn.classList.add('hidden');
-  chatEl.innerHTML = '';
-  chatEl.appendChild(welcome);
+  chatInner.innerHTML = '';
+  chatInner.appendChild(welcome);
   pendingImages = [];
   renderAttachments();
   clearUrlContext();
@@ -1555,14 +2100,7 @@ viewActiveBtn.addEventListener('click', () => { archivedView = false; updateView
 viewArchivedBtn.addEventListener('click', () => { archivedView = true; updateViewTabs(); refreshSessions(); });
 
 function updateViewTabs() {
-  viewActiveBtn.classList.toggle('bg-orange-100', !archivedView);
-  viewActiveBtn.classList.toggle('dark:bg-orange-900/30', !archivedView);
-  viewActiveBtn.classList.toggle('text-orange-800', !archivedView);
-  viewActiveBtn.classList.toggle('dark:text-orange-200', !archivedView);
-  viewArchivedBtn.classList.toggle('bg-orange-100', archivedView);
-  viewArchivedBtn.classList.toggle('dark:bg-orange-900/30', archivedView);
-  viewArchivedBtn.classList.toggle('text-orange-800', archivedView);
-  viewArchivedBtn.classList.toggle('dark:text-orange-200', archivedView);
+  updateTabStyles();
 }
 
 async function refreshTags() {
@@ -1693,7 +2231,7 @@ async function loadSession(id) {
     lastUserIndex = -1;
     if (data.cwd) cwdInput.value = data.cwd;
     suggestTitleBtn.classList.remove('hidden');
-    chatEl.innerHTML = '';
+    chatInner.innerHTML = '';
     restoreDraft();
     refreshGitStatus();
 
@@ -2166,7 +2704,7 @@ function bumpNewContent() {
 // ===== follow-up suggestions =====
 async function fetchFollowupSuggestions() {
   if (!sessionId) return;
-  const asstWraps = chatEl.querySelectorAll('.asst-wrap');
+  const asstWraps = chatInner.querySelectorAll('.asst-wrap');
   const lastAsst = asstWraps[asstWraps.length - 1];
   if (!lastAsst) return;
   const existing = lastAsst.querySelector('.followup-chips, .followup-loading');
@@ -2225,6 +2763,36 @@ function webSearchPrefix() {
 
 // ===== mobile sidebar toggle =====
 toggleSidebar.addEventListener('click', () => sidebar.classList.toggle('open'));
+
+// ===== header more (advanced toolbar) =====
+const headerMoreBtn = $('headerMoreBtn');
+const advancedBar = $('advancedBar');
+headerMoreBtn.addEventListener('click', () => {
+  advancedBar.classList.toggle('hidden');
+  headerMoreBtn.classList.toggle('toolbar-btn-active');
+});
+
+// ===== empty state cards =====
+document.querySelectorAll('.empty-card').forEach(card => {
+  card.addEventListener('click', () => {
+    const p = card.dataset.prompt;
+    if (!p) return;
+    input.value = p;
+    input.focus();
+    updateTokenCount();
+    autosizeTextarea();
+    input.setSelectionRange(p.length, p.length);
+  });
+});
+
+// ===== sidebar tab styling =====
+function updateTabStyles() {
+  [viewActiveBtn, viewArchivedBtn].forEach(b => {
+    b.style.color = 'var(--text-subtle)';
+  });
+  const activeBtn = archivedView ? viewArchivedBtn : viewActiveBtn;
+  activeBtn.style.color = 'var(--text)';
+}
 
 // ===== init =====
 restoreDraft();
