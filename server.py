@@ -105,6 +105,11 @@ def _windows_claude_node_argv(command: str) -> Optional[List[str]]:
     if script is None:
         return None
 
+    # claude-code 2.x ships a native Windows launcher (bin/claude.exe); invoke
+    # it directly. node.exe can't load an .exe as a JS module.
+    if script.suffix.lower() in (".exe", ".com"):
+        return [str(script)]
+
     node_candidates = [
         bin_dir / "node.exe",
         shutil.which("node.exe"),
