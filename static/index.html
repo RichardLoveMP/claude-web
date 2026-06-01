@@ -1173,7 +1173,7 @@
   </div>
 
   <div class="px-3 py-2.5 text-[12px] flex items-center justify-between gap-2" style="border-top:1px solid var(--border); color:var(--text-muted);">
-    <button id="statsBar" class="hover:underline flex items-center gap-1" style="color:var(--text);" title="查看统计">💰 $0.00</button>
+    <button id="statsBar" class="hover:underline flex items-center gap-1" style="color:var(--text);" title="查看统计（估算价，仅供参考）">💰 ~$0.00</button>
     <button id="mcpBtn" class="hover:underline flex items-center gap-1" style="color:var(--text);" title="MCP 管理">🔌</button>
     <button id="settingsBtn" class="hover:underline flex items-center gap-1" style="color:var(--text);">⚙️</button>
   </div>
@@ -1435,8 +1435,9 @@
     </div>
     <div class="grid grid-cols-4 gap-3 text-sm mb-5">
       <div class="p-3 rounded bg-orange-50 dark:bg-orange-900/30">
-        <div class="text-xs text-gray-500">总成本</div>
-        <div id="statCost" class="text-xl font-semibold">$0.00</div>
+        <div class="text-xs text-gray-500">估算成本 <span title="按 Anthropic 官方价目表估算；订阅 / 第三方网关用户与实付不同" style="cursor:help;">ⓘ</span></div>
+        <div id="statCost" class="text-xl font-semibold">~$0.00</div>
+        <div id="statCostNote" class="hidden text-[10px] mt-1" style="color:#f59e0b;"></div>
       </div>
       <div class="p-3 rounded bg-blue-50 dark:bg-blue-900/30">
         <div class="text-xs text-gray-500">会话数</div>
@@ -3963,13 +3964,8 @@ function handleStreamEvent(ev, container) {
     const idx = ev.index;
     const block = ev.content_block || {};
     if (block.type === 'text') {
-      hideThinking(state.container);
-      const el = document.createElement('div');
-      el.className = 'prose-custom bubble-asst relative group whitespace-pre-wrap break-words';
-      state.container.appendChild(el);
-      state.blocks[idx] = { type: 'text', el, text: '' };
+      state.blocks[idx] = { type: 'text', el: null, text: '' };
     } else if (block.type === 'thinking') {
-      hideThinking(state.container);
       state.blocks[idx] = { type: 'thinking', el: null, text: '' };
     } else if (block.type === 'tool_use') {
       hideThinking(state.container);
@@ -3989,7 +3985,16 @@ function handleStreamEvent(ev, container) {
     if (!block) return container;
     const d = ev.delta || {};
     if (d.type === 'text_delta' && block.type === 'text') {
-      block.text += d.text || '';
+      const chunk = d.text || '';
+      if (!chunk) return container;
+      block.text += chunk;
+      if (!block.el) {
+        hideThinking(state.container);
+        const el = document.createElement('div');
+        el.className = 'prose-custom bubble-asst relative group whitespace-pre-wrap break-words';
+        state.container.appendChild(el);
+        block.el = el;
+      }
       block.el.textContent = block.text;
       scrollBottom();
       scheduleArtifactDebounce(block, () => {
@@ -4004,6 +4009,7 @@ function handleStreamEvent(ev, container) {
       if (!chunk) return container;
       block.text += chunk;
       if (!block.el) {
+        hideThinking(state.container);
         const el = document.createElement('details');
         el.open = true;
         el.className = 'bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-900 rounded-lg overflow-hidden';
@@ -5227,8 +5233,24 @@ async function refreshStats() {
     const r = await fetch('/api/stats');
     if (!r.ok) return;
     const d = await r.json();
-    statsBar.textContent = `💰 $${d.total_cost_usd.toFixed(2)} · ${d.total_sessions}`;
-    $('statCost').textContent = '$' + d.total_cost_usd.toFixed(4);
+    const pricing = d.pricing || {};
+    const gatewayTag = pricing.is_gateway ? ' ⚠' : '';
+    const tipBase = '按 Anthropic 官方价目表估算；订阅 / 第三方网关用户与实付不同';
+    const tipFull = pricing.is_gateway
+      ? `${tipBase}\n检测到第三方网关：${pricing.base_url}`
+      : tipBase;
+    statsBar.textContent = `💰 ~$${d.total_cost_usd.toFixed(2)} · ${d.total_sessions}${gatewayTag}`;
+    statsBar.title = tipFull;
+    $('statCost').textContent = '~$' + d.total_cost_usd.toFixed(4);
+    const noteEl = $('statCostNote');
+    if (noteEl) {
+      if (pricing.is_gateway) {
+        noteEl.textContent = `⚠ 第三方网关：${pricing.base_url}`;
+        noteEl.classList.remove('hidden');
+      } else {
+        noteEl.classList.add('hidden');
+      }
+    }
     $('statSessions').textContent = d.total_sessions;
     $('statTurns').textContent = d.total_turns;
     $('statDuration').textContent = (d.total_duration_ms / 1000).toFixed(1) + 's';

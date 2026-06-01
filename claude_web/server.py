@@ -3198,6 +3198,8 @@ async def stats():
             LIMIT 10
             """
         ).fetchall()
+    base_url = (os.environ.get("ANTHROPIC_BASE_URL") or "").strip().rstrip("/")
+    is_gateway = bool(base_url) and "api.anthropic.com" not in base_url
     return {
         "total_cost_usd": round(float(usage["total_cost"] or 0), 4),
         "total_duration_ms": float(usage["total_duration"] or 0),
@@ -3209,6 +3211,11 @@ async def stats():
             if r["day"] is not None
         ],
         "tools": [{"name": r["name"], "count": r["count"]} for r in tool_rows],
+        "pricing": {
+            "is_estimate": True,
+            "is_gateway": is_gateway,
+            "base_url": base_url if is_gateway else None,
+        },
     }
 
 
