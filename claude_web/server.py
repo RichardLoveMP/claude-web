@@ -8,6 +8,7 @@ import shutil
 import socket
 import sqlite3
 import threading
+from dataclasses import dataclass, field
 import time
 import urllib.error
 import urllib.request
@@ -55,6 +56,20 @@ _stopped_sessions: Set[str] = set()
 # clobbered by the incoming request that shares the same session_id.
 _terminated_processes: "Set[asyncio.subprocess.Process]" = set()
 _compacting_sessions: Set[str] = set()
+
+WARM_IDLE_TIMEOUT = 90.0  # seconds before an idle warm process is reaped
+
+
+@dataclass
+class _WarmEntry:
+    """Holds a warm (idle) claude process ready to accept the next turn."""
+    process: asyncio.subprocess.Process
+    signature: tuple          # _proc_sig() of the spawning params; mismatch → restart
+    last_used: float          # time.monotonic()
+    write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+_warm_processes: Dict[str, _WarmEntry] = {}   # session_id → idle warm process
 _event_locks: Dict[str, threading.Lock] = {}
 _event_lock_refs: Dict[str, int] = {}
 _event_lock_access: Dict[str, float] = {}
@@ -184,13 +199,43 @@ async def _terminate_process(process: asyncio.subprocess.Process, grace: float =
         pass
 
 
-async def _shutdown_terminate_running_processes() -> None:
-    if not _running_processes:
+async def _interrupt_warm(process: asyncio.subprocess.Process) -> None:
+    """Send a control_request interrupt to a persistent process (non-destructive)."""
+    if process.stdin is None or process.stdin.is_closing():
         return
+    ctrl = json.dumps({
+        "type": "control_request",
+        "request_id": str(uuid.uuid4()),
+        "request": {"subtype": "interrupt"},
+    }) + "\n"
+    try:
+        process.stdin.write(ctrl.encode())
+        await process.stdin.drain()
+    except (BrokenPipeError, ConnectionResetError):
+        pass
+
+
+async def _warm_reaper() -> None:
+    """Background task: evict warm processes idle longer than WARM_IDLE_TIMEOUT."""
+    while True:
+        await asyncio.sleep(30)
+        now = time.monotonic()
+        dead = [sid for sid, e in list(_warm_processes.items())
+                if now - e.last_used > WARM_IDLE_TIMEOUT]
+        for sid in dead:
+            entry = _warm_processes.pop(sid, None)
+            if entry:
+                await _terminate_process(entry.process)
+
+
+async def _shutdown_terminate_running_processes() -> None:
     processes = list(_running_processes.values())
     _running_processes.clear()
+    warm_entries = list(_warm_processes.values())
+    _warm_processes.clear()
     await asyncio.gather(
         *(_terminate_process(p) for p in processes),
+        *(_terminate_process(e.process) for e in warm_entries),
         return_exceptions=True,
     )
 
@@ -221,6 +266,7 @@ def _prune_old_uploads(retention_seconds: int = _UPLOAD_RETENTION_SECONDS) -> in
 async def _lifespan(app: FastAPI):
     # Prune stale uploads in a background thread so startup isn't blocked on disk IO.
     asyncio.get_event_loop().run_in_executor(None, _prune_old_uploads)
+    asyncio.create_task(_warm_reaper())
     try:
         yield
     finally:
@@ -779,6 +825,59 @@ class FetchUrlRequest(BaseModel):
     max_chars: Optional[int] = 10000
 
 
+def _proc_sig(
+    model: Optional[str],
+    permission_mode: Optional[str],
+    system_prompt: Optional[str],
+    cwd: str,
+    allowed_tools: Optional[List[str]],
+    disallowed_tools: Optional[List[str]],
+) -> tuple:
+    """Return a hashable signature that identifies process reusability.
+
+    Two consecutive turns are served by the same warm process only when their
+    signatures match.  session_id / remote_session_id are intentionally absent:
+    once spawned, the process already knows its own session.
+    """
+    return (
+        model or "",
+        permission_mode or "default",
+        (system_prompt or "").strip(),
+        str(Path(cwd).resolve()),
+        ",".join(sorted(allowed_tools or [])),
+        ",".join(sorted(disallowed_tools or [])),
+    )
+
+
+def build_persistent_args(
+    session_id: str,
+    resume: bool,
+    model: Optional[str],
+    system_prompt: Optional[str],
+    permission_mode: Optional[str] = None,
+    allowed_tools: Optional[List[str]] = None,
+    disallowed_tools: Optional[List[str]] = None,
+) -> List[str]:
+    """Build args for a long-lived persistent process (stdin stays open)."""
+    args = claude_cli_argv() + [
+        "-p", "--input-format", "stream-json",
+        "--output-format", "stream-json",
+        "--verbose", "--include-partial-messages", "--replay-user-messages",
+    ]
+    args += ["--resume", session_id] if resume else ["--session-id", session_id]
+    if model:
+        args += ["--model", model]
+    if system_prompt:
+        args += ["--append-system-prompt", system_prompt]
+    if permission_mode and permission_mode in ("default", "acceptEdits", "bypassPermissions", "plan"):
+        args += ["--permission-mode", permission_mode]
+    if allowed_tools:
+        args += ["--allowed-tools", ",".join(allowed_tools)]
+    if disallowed_tools:
+        args += ["--disallowed-tools", ",".join(disallowed_tools)]
+    return args
+
+
 def build_args(
     message: str,
     session_id: str,
@@ -1102,68 +1201,81 @@ async def chat(req: ChatRequest):
         }
         yield f"data: {json.dumps(meta)}\n\n"
 
-        # If a previous chat for the same session is still running (e.g. duplicate
-        # request, network retry, fast double-click), terminate it before spawning
-        # a new one. Otherwise the old subprocess would be orphaned, burning tokens
-        # and producing stray events.
+        effective_system_prompt = compose_system_prompt(
+            load_enabled_memories(work_dir, session_id),
+            req.system_prompt,
+        )
+        current_sig = _proc_sig(
+            req.model, req.permission_mode, effective_system_prompt,
+            work_dir, req.allowed_tools, req.disallowed_tools,
+        )
+
+        # ── Reclaim or discard a warm process for this session ──────────────
+        warm = _warm_processes.pop(session_id, None)
+        if warm is not None:
+            if warm.process.returncode is not None:
+                # Process died between turns (crash / OOM); discard silently.
+                warm = None
+            elif warm.signature != current_sig:
+                # Config changed (model / permissions / cwd / …) → restart.
+                _terminated_processes.add(warm.process)
+                await _terminate_process(warm.process)
+                warm = None
+
+        # ── Kill any duplicate in-flight request (fast double-click / retry) ─
         existing = _running_processes.pop(session_id, None)
         if existing is not None:
             _terminated_processes.add(existing)
             await _terminate_process(existing)
         _stopped_sessions.discard(session_id)
 
-        has_images = bool(req.images)
-        # Route through stdin when the prompt would blow past argv limits
-        # (macOS ~256KB, Linux ~128KB total argv). Images already force stdin.
-        message_too_large = len(full_message.encode("utf-8")) > ARGV_STDIN_THRESHOLD
-        use_stdin = has_images or message_too_large
-        effective_system_prompt = compose_system_prompt(
-            load_enabled_memories(work_dir, session_id),
-            req.system_prompt,
-        )
-        try:
-            args = build_args(
-                full_message, remote_session_id,
-                resume=not is_new,
-                model=req.model,
-                system_prompt=effective_system_prompt,
-                permission_mode=req.permission_mode,
-                allowed_tools=req.allowed_tools,
-                disallowed_tools=req.disallowed_tools,
-                use_stdin=use_stdin,
-            )
-        except ClaudeCliResolutionError as e:
-            err_event = {"type": "error", "message": str(e)}
-            append_event(session_id, err_event)
-            yield f"data: {json.dumps(err_event, ensure_ascii=False)}\n\n"
-            return
-        stdin_data: Optional[bytes] = None
-        if use_stdin:
-            stdin_data = build_image_input_message(full_message, req.images or [])
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *args,
-                stdin=asyncio.subprocess.PIPE if use_stdin else None,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=work_dir,
-                limit=16 * 1024 * 1024,
-            )
-            if use_stdin and stdin_data and process.stdin:
+        # ── Build CLI args (only needed when spawning a fresh process) ────────
+        write_lock: asyncio.Lock
+        if warm is not None:
+            process = warm.process
+            write_lock = warm.write_lock
+        else:
+            try:
+                args = build_persistent_args(
+                    remote_session_id,
+                    resume=not is_new,
+                    model=req.model,
+                    system_prompt=effective_system_prompt,
+                    permission_mode=req.permission_mode,
+                    allowed_tools=req.allowed_tools,
+                    disallowed_tools=req.disallowed_tools,
+                )
+            except ClaudeCliResolutionError as e:
+                err_event = {"type": "error", "message": str(e)}
+                append_event(session_id, err_event)
+                yield f"data: {json.dumps(err_event, ensure_ascii=False)}\n\n"
+                return
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *args,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=work_dir,
+                    limit=16 * 1024 * 1024,
+                )
+            except FileNotFoundError:
+                err_event = {"type": "error", "message": "claude CLI not found in PATH"}
+                append_event(session_id, err_event)
+                yield f"data: {json.dumps(err_event)}\n\n"
+                return
+            write_lock = asyncio.Lock()
+
+        # ── Send the user message via stdin (keep stdin open for future turns) ─
+        stdin_payload = build_image_input_message(full_message, req.images or [])
+        if process.stdin is not None:
+            async with write_lock:
                 try:
-                    process.stdin.write(stdin_data)
+                    process.stdin.write(stdin_payload)
                     await process.stdin.drain()
-                    process.stdin.close()
-                    await process.stdin.wait_closed()
                 except (BrokenPipeError, ConnectionResetError):
-                    # CLI exited early (auth failure, bad args, etc). The stderr
-                    # path will surface the real reason; don't tear down SSE here.
+                    # Process died right after we checked; stderr will explain why.
                     pass
-        except FileNotFoundError:
-            err_event = {"type": "error", "message": "claude CLI not found in PATH"}
-            append_event(session_id, err_event)
-            yield f"data: {json.dumps(err_event)}\n\n"
-            return
 
         _running_processes[session_id] = process
         stderr_buffer = bytearray()
@@ -1171,6 +1283,7 @@ async def chat(req: ChatRequest):
         if process.stderr is not None:
             stderr_task = asyncio.create_task(_drain_stream(process.stderr, stderr_buffer))
 
+        turn_ended = False  # set True when result event received
         try:
             assert process.stdout is not None
             while True:
@@ -1182,6 +1295,7 @@ async def chat(req: ChatRequest):
                     yield f"data: {json.dumps(err_event)}\n\n"
                     break
                 if not raw:
+                    # EOF: process exited unexpectedly
                     break
                 line = raw.decode("utf-8", errors="replace").strip()
                 if not line:
@@ -1191,6 +1305,12 @@ async def chat(req: ChatRequest):
                 except json.JSONDecodeError:
                     obj = {"type": "raw", "text": line}
                 t = obj.get("type")
+
+                # --replay-user-messages echoes our stdin message back; skip it.
+                # control_response is the interrupt acknowledgement; also skip.
+                if t in ("user", "control_response"):
+                    continue
+
                 if session_has_remote_conversation([obj]):
                     remote_became_ready = True
                 if t != "stream_event" and not (t == "system" and obj.get("subtype", "").startswith("hook_")):
@@ -1199,20 +1319,28 @@ async def chat(req: ChatRequest):
                         record_usage(session_id, obj)
                 yield f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
 
-            rc = await process.wait()
-            if stderr_task is not None:
-                try:
-                    await asyncio.wait_for(asyncio.shield(stderr_task), timeout=1.0)
-                except asyncio.TimeoutError:
-                    pass
-            stopped_by_user = (
-                session_id in _stopped_sessions or process in _terminated_processes
-            )
-            if rc != 0 and not stopped_by_user:
-                err_text = bytes(stderr_buffer).decode("utf-8", errors="replace")
-                err_event = classify_claude_error(err_text or f"claude exited with code {rc}")
-                append_event(session_id, err_event)
-                yield f"data: {json.dumps(err_event, ensure_ascii=False)}\n\n"
+                if t == "result":
+                    # Turn complete.  Persistent process stays alive; stop reading
+                    # so the OS pipe buffer can accumulate the next turn's init event.
+                    turn_ended = True
+                    break
+
+            if not turn_ended:
+                # Process exited (EOF) — either crashed or was SIGTERM'd.
+                rc = await process.wait()
+                if stderr_task is not None:
+                    try:
+                        await asyncio.wait_for(asyncio.shield(stderr_task), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        pass
+                stopped_by_user = (
+                    session_id in _stopped_sessions or process in _terminated_processes
+                )
+                if rc != 0 and not stopped_by_user:
+                    err_text = bytes(stderr_buffer).decode("utf-8", errors="replace")
+                    err_event = classify_claude_error(err_text or f"claude exited with code {rc}")
+                    append_event(session_id, err_event)
+                    yield f"data: {json.dumps(err_event, ensure_ascii=False)}\n\n"
         finally:
             if stderr_task is not None and not stderr_task.done():
                 stderr_task.cancel()
@@ -1220,7 +1348,25 @@ async def chat(req: ChatRequest):
                     await stderr_task
                 except (asyncio.CancelledError, Exception):
                     pass
-            await _terminate_process(process)
+
+            # Park the process back in the warm pool if it's still alive and
+            # wasn't intentionally killed (SIGTERM replacement or /stop).
+            should_park = (
+                turn_ended
+                and process.returncode is None
+                and process not in _terminated_processes
+                and session_id not in _stopped_sessions
+            )
+            if should_park:
+                _warm_processes[session_id] = _WarmEntry(
+                    process=process,
+                    signature=current_sig,
+                    last_used=time.monotonic(),
+                    write_lock=write_lock,
+                )
+            else:
+                await _terminate_process(process)
+
             if _running_processes.get(session_id) is process:
                 _running_processes.pop(session_id, None)
                 _stopped_sessions.discard(session_id)
@@ -1244,8 +1390,16 @@ async def stop_chat(session_id: str):
     if process is None:
         raise HTTPException(status_code=404, detail="no running process for this session")
     _stopped_sessions.add(session_id)
-    _terminated_processes.add(process)
-    await _terminate_process(process)
+    # Prefer sending an interrupt so the process can finish cleanly and the
+    # SSE generator's finally block can decide whether to park it.  Fall back to
+    # SIGTERM when stdin is already closed (e.g. a process spawned without --replay).
+    if process.stdin and not process.stdin.is_closing():
+        await _interrupt_warm(process)
+        # Don't add to _terminated_processes here; the SSE finally block will
+        # see session_id in _stopped_sessions and skip warm-parking instead.
+    else:
+        _terminated_processes.add(process)
+        await _terminate_process(process)
     stop_event = {"type": "error", "message": "用户中止", "ts": time.time()}
     append_event(session_id, stop_event)
     return {"ok": True}
