@@ -45,17 +45,22 @@ Issues = "https://github.com/heng1234/claude-web/issues"
 
 [project.scripts]
 claude-web = "claude_web.server:main"
+claude-web-extension-path = "claude_web.server:print_extension_path"
 
 [tool.hatch.version]
 path = "claude_web/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["claude_web"]
+artifacts = [
+    "claude_web/browser_extension/**",
+]
 
 [tool.hatch.build.targets.sdist]
 # Root-level server.py / static/ are dev-time convenience copies of the package
 # contents. Don't ship duplicates in the source distribution.
 include = [
+    "browser-extension/**",
     "claude_web/**",
     "pyproject.toml",
     "README.md",

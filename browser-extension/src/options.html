@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Claude Code Web 插件设置</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div class="brand-row">
+        <div class="mark" aria-hidden="true">C</div>
+        <div>
+          <h1>Claude Code Web Assistant</h1>
+          <p>把网页里的代码和文字，一键带到本地 Claude Code Web。</p>
+        </div>
+      </div>
+      <button id="testBtn" type="button">测试连接</button>
+    </header>
+
+    <section class="setup">
+      <div class="step">
+        <span>1</span>
+        <strong>启动本地服务</strong>
+        <p>运行 <code>claude-web</code>，保持 Web UI 打开。</p>
+      </div>
+      <div class="step">
+        <span>2</span>
+        <strong>生成 Token</strong>
+        <p>在 Claude Web 设置里生成并复制插件 Token。</p>
+      </div>
+      <div class="step">
+        <span>3</span>
+        <strong>选中即问</strong>
+        <p>网页中选中内容，右键选择 Claude Code Web。</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>本地连接</h2>
+          <p>插件只连接 localhost，不会把 Token 发到外部服务。</p>
+        </div>
+        <div id="connectionBadge" class="badge">未测试</div>
+      </div>
+
+      <div class="grid">
+        <label>
+          <span>服务地址</span>
+          <input id="serviceUrl" autocomplete="off" placeholder="http://127.0.0.1:8765" />
+        </label>
+        <label>
+          <span>Token</span>
+          <input id="token" autocomplete="off" type="password" placeholder="在 Claude Web 设置页生成" />
+        </label>
+      </div>
+
+      <div class="hint">
+        <strong>pip 用户怎么找插件目录？</strong>
+        <p>打开 Claude Web 的设置页，会显示插件目录和下载 ZIP；也可以在终端运行 <code>claude-web --extension-path</code>。</p>
+      </div>
+
+      <label>
+        <span>默认工作目录</span>
+        <input id="cwd" autocomplete="off" placeholder="/Users/you/project，留空为 ~" />
+      </label>
+
+      <div class="row">
+        <label>
+          <span>模型</span>
+          <select id="model">
+            <option value="">默认模型</option>
+            <option value="opus">Opus</option>
+            <option value="sonnet">Sonnet</option>
+            <option value="haiku">Haiku</option>
+          </select>
+        </label>
+        <label>
+          <span>权限模式</span>
+          <select id="permissionMode">
+            <option value="default">默认</option>
+            <option value="plan">计划</option>
+            <option value="readonly">只读</option>
+          </select>
+        </label>
+      </div>
+
+      <footer>
+        <span id="status">未保存</span>
+        <button id="saveBtn" type="button">保存设置</button>
+      </footer>
+    </section>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

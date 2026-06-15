@@ -45,6 +45,7 @@ pip install claude-web-ui && claude-web
 
 ### 📝 输入
 - 文本 + 图片（**文件选择 / 粘贴 / 拖拽**），同一图片不会重复上传
+- **Chrome 选中即问插件**：网页里选中代码/文字，右键让 Claude 解释、审查、改写或生成测试，结果直接显示在 Chrome Side Panel，并可一键转入完整 Web 会话
 - 待发送图片缩略图**点击放大预览**，确认上传内容
 - **文档上传**：PDF / DOCX / XLSX / XLS / CSV / TSV / TXT / MD / JSON / LOG 自动提取文本作为上下文
 - **URL 自动检测**：输入框里粘贴链接，发送时自动抓取网页正文
@@ -197,6 +198,40 @@ PORT=9000 python server.py
 
 直接在新浏览器标签页 / 窗口打开 `http://127.0.0.1:8765`，点「＋ 新会话」即可并行对话。每个标签页独立，互不干扰。
 
+### Chrome 插件：选中即问
+
+插件目前按 Chrome 开发者模式安装。`pip install claude-web-ui` 的用户不需要找源码仓库，Claude Web 设置页会直接显示插件目录，也可以下载 ZIP。
+
+1. 启动 `claude-web`，打开 `http://127.0.0.1:8765`。
+2. 打开 Claude Web「设置」里的「浏览器插件」区域。
+3. 复制页面显示的插件目录，或点击「下载 ZIP」后解压。
+4. 在 Claude Web「设置」里点击「生成 Token」，复制生成的一次性 Token。
+5. 打开 Chrome `chrome://extensions`，开启「开发者模式」。
+6. 点击「加载已解压的扩展程序」，选择插件目录或 ZIP 解压后的目录。
+7. 打开插件设置页，填写服务地址、Token、默认工作目录和权限模式。
+8. 在任意网页选中代码/文字，右键 `Claude Code Web`，选择解释、审查、改写或生成测试。
+
+命令行也可以直接查看 pip 包里的插件目录：
+
+```bash
+claude-web --extension-path
+# 或
+claude-web-extension-path
+```
+
+源码开发时，插件目录仍然是仓库根部的 `browser-extension/`。
+
+如果更新了插件代码，需要到 Chrome `chrome://extensions` 点一次「重新加载」，再刷新正在测试的网页。
+
+插件默认在 Chrome Side Panel 里显示流式回答；需要长对话或查看历史时，点「在 Claude Web 中继续」会打开同一个会话。插件入口只支持 `default` / `plan` / `readonly` 三种权限模式，不会从插件侧启用 `bypassPermissions`。
+
+#### 常见问题
+
+- 右键后没有反应：先到 `chrome://extensions` 重新加载插件，然后刷新当前网页再试。
+- 侧边栏提示未配置 Token：在 Claude Web 设置里重新生成 Token，粘贴到插件设置页并保存。
+- 测试连接失败：确认 `claude-web` 正在运行，插件服务地址和 Web 页面端口一致，例如 `http://127.0.0.1:8765`。
+- pip 用户找不到目录：在 Web 设置页复制「插件目录」，或者运行 `claude-web --extension-path`。
+
 ---
 
 ## 🔐 提交前敏感信息检查
@@ -257,6 +292,7 @@ python3 scripts/check_sensitive_info.py --paths server.py static/index.html READ
 ```
 claude-web/
 ├── server.py              # FastAPI 主服务
+├── browser-extension/     # Chrome MV3 选中即问插件
 ├── static/
 │   └── index.html         # 单页前端
 ├── requirements.txt
@@ -275,6 +311,12 @@ claude-web/
 |------|------|------|
 | `/api/chat` | POST | 主对话，SSE 流式返回 |
 | `/api/chat/stop/{session_id}` | POST | 停止正在运行的会话 |
+| `/api/extension/status` | GET | Chrome 插件检测服务和 token 状态 |
+| `/api/extension/token` | POST | 生成 / 重置浏览器插件 token |
+| `/api/extension/ask` | POST | 插件选中即问，SSE 流式返回并写入会话历史 |
+| `/api/extension/stop/{session_id}` | POST | 停止插件侧正在运行的会话 |
+| `/api/extension/drafts` | POST | 创建插件草稿并返回 Claude Web 打开链接 |
+| `/api/extension/drafts/{id}` | GET | Claude Web 读取插件草稿并自动填入 / 发送 |
 | `/api/upload` | POST | 上传图片 |
 | `/api/upload-doc` | POST | 上传文档（PDF / DOCX / XLSX / XLS / CSV / TSV / TXT / MD / JSON / LOG），自动提取文本 |
 | `/api/exec-code` | POST | 运行代码块（Python/JS/Bash，15s 超时） |

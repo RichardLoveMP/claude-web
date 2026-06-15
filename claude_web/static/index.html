@@ -168,6 +168,61 @@
   }
   .user-msg-wrap { margin: 12px 0; }
   .asst-wrap { margin: 12px 0; }
+  .message-feedback {
+    display: flex; align-items: center; gap: 4px;
+    margin-top: 6px; min-height: 24px;
+    color: var(--text-subtle);
+  }
+  .feedback-btn {
+    width: 28px; height: 28px; border-radius: 7px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: 1px solid transparent;
+    color: var(--text-subtle); cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s, transform .12s;
+  }
+  .feedback-btn:hover { background: var(--surface-2); color: var(--text); }
+  .feedback-btn:active { transform: scale(.96); }
+  .feedback-btn.active {
+    background: var(--accent-soft-2); color: var(--accent);
+    border-color: var(--accent-soft);
+  }
+  .dark .feedback-btn.active { background: var(--accent-soft); }
+  .feedback-btn[data-feedback-rating="down"].active {
+    color: #dc2626; background: #fef2f2; border-color: #fecaca;
+  }
+  .dark .feedback-btn[data-feedback-rating="down"].active {
+    color: #fca5a5; background: #450a0a; border-color: #7f1d1d;
+  }
+  .feedback-btn[data-feedback-star].active {
+    color: #d97706; background: #fffbeb; border-color: #fde68a;
+  }
+  .dark .feedback-btn[data-feedback-star].active {
+    color: #fbbf24; background: #451a03; border-color: #92400e;
+  }
+  .feedback-note-pill {
+    max-width: 260px; font-size: 11px; line-height: 1.35;
+    padding: 4px 8px; border-radius: 9999px;
+    background: var(--surface-2); color: var(--text-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .feedback-popover {
+    position: fixed; z-index: 70; width: min(360px, calc(100vw - 24px));
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow-lg); padding: 12px;
+  }
+  .feedback-reason-grid {
+    display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0;
+  }
+  .feedback-reason {
+    padding: 5px 9px; border-radius: 9999px; font-size: 12px;
+    border: 1px solid var(--border); background: var(--surface-2);
+    color: var(--text-muted); cursor: pointer;
+  }
+  .feedback-reason.active {
+    border-color: var(--accent); color: var(--accent); background: var(--accent-soft-2);
+  }
+  .dark .feedback-reason.active { background: var(--accent-soft); }
 
   /* ===== Avatar ===== */
   .avatar {
@@ -1109,8 +1164,10 @@
   .tab-btn {
     font-family: inherit; font-size: inherit; font-weight: inherit;
     background: transparent; border: none; cursor: pointer;
+    color: var(--text-subtle) !important;
     padding: 0;
   }
+  .tab-btn.tab-active { color: var(--text) !important; }
   .tab-btn:hover { color: var(--text) !important; }
 
   /* Select cleanup (header) */
@@ -1156,9 +1213,9 @@
   </div>
 
   <div class="px-3 pt-3 pb-1 flex items-center gap-3 text-[11px] uppercase tracking-wider" style="color:var(--text-subtle); font-weight:600;">
-    <button id="viewActive" class="tab-btn transition-colors" style="color:var(--text);">活跃</button>
-    <button id="viewArchived" class="tab-btn transition-colors" style="color:var(--text-subtle);">归档</button>
-    <button id="viewCli" class="tab-btn transition-colors" style="color:var(--text-subtle);">CLI</button>
+    <button id="viewActive" class="tab-btn transition-colors tab-active">活跃</button>
+    <button id="viewArchived" class="tab-btn transition-colors">归档</button>
+    <button id="viewCli" class="tab-btn transition-colors">CLI</button>
   </div>
   <div id="tagFilter" class="px-3 text-xs hidden"></div>
 
@@ -1366,6 +1423,37 @@
         <label class="inline-flex items-center gap-2"><input type="checkbox" id="urlAutoFetch" /> 自动识别 URL，发送时抓取网页内容作为上下文</label>
       </div>
       <div class="border-t border-gray-200 dark:border-slate-700 pt-4">
+        <div class="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <label class="block font-medium">浏览器插件</label>
+            <div id="extensionStatusText" class="text-xs text-gray-500 mt-0.5">未检测</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <a id="downloadExtensionBtn" href="/api/extension/package" class="px-3 py-1.5 rounded text-sm hidden" style="background:var(--surface-2); border:1px solid var(--border); color:var(--text);">下载 ZIP</a>
+            <button id="generateExtensionTokenBtn" type="button" class="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded text-sm">生成 Token</button>
+          </div>
+        </div>
+        <div id="extensionTokenBox" class="hidden">
+          <div class="text-xs text-gray-500 mb-1">只显示一次，请粘贴到 Chrome 插件设置页。</div>
+          <div class="flex items-center gap-2">
+            <input id="extensionTokenValue" readonly class="flex-1 px-2.5 py-1.5 rounded text-xs" style="background:var(--surface-2); border:1px solid var(--border); color:var(--text);" />
+            <button id="copyExtensionTokenBtn" type="button" class="px-2.5 py-1.5 text-xs rounded" style="background:var(--surface-2); border:1px solid var(--border);">复制</button>
+          </div>
+        </div>
+        <div class="mt-3 p-3 rounded text-xs" style="background:var(--surface-2); border:1px solid var(--border); color:var(--text-muted);">
+          <div class="font-medium mb-1" style="color:var(--text);">首次安装</div>
+          <ol class="list-decimal pl-4 space-y-1">
+            <li>打开 Chrome <code>chrome://extensions</code> 并开启「开发者模式」。</li>
+            <li>点击「加载已解压的扩展程序」。</li>
+            <li>选择下面的插件目录；如果浏览器无法选择包内目录，就先下载 ZIP、解压后选择解压目录。</li>
+            <li>打开插件设置页，填写服务地址和 Token，然后测试连接。</li>
+          </ol>
+          <div class="mt-2 break-all">插件目录：<code id="extensionPathText">检测中...</code></div>
+          <div class="mt-1">服务地址默认：<code id="extensionDefaultUrl">http://127.0.0.1:8765</code></div>
+          <div class="mt-1">pip 用户也可以运行：<code>claude-web --extension-path</code></div>
+        </div>
+      </div>
+      <div class="border-t border-gray-200 dark:border-slate-700 pt-4">
         <div class="flex items-center justify-between mb-2">
           <label class="block font-medium">记忆</label>
           <span id="activeMemoryCount" class="text-xs text-gray-500">0 条生效</span>
@@ -1490,6 +1578,32 @@
     <div>
       <div class="text-sm font-semibold mb-2">工具使用排行</div>
       <canvas id="toolsChart" height="80"></canvas>
+    </div>
+    <div class="mt-5 pt-4" style="border-top:1px solid var(--border);">
+      <div class="flex items-center justify-between mb-3">
+        <div class="text-sm font-semibold">回答反馈</div>
+        <div id="feedbackStatsSummary" class="text-xs" style="color:var(--text-subtle);">暂无标记</div>
+      </div>
+      <div class="grid grid-cols-4 gap-2 text-sm mb-3">
+        <div class="p-2 rounded" style="background:var(--surface-2);">
+          <div class="text-xs" style="color:var(--text-muted);">好评</div>
+          <div id="feedbackUpCount" class="text-lg font-semibold">0</div>
+        </div>
+        <div class="p-2 rounded" style="background:var(--surface-2);">
+          <div class="text-xs" style="color:var(--text-muted);">差评</div>
+          <div id="feedbackDownCount" class="text-lg font-semibold">0</div>
+        </div>
+        <div class="p-2 rounded" style="background:var(--surface-2);">
+          <div class="text-xs" style="color:var(--text-muted);">收藏</div>
+          <div id="feedbackStarCount" class="text-lg font-semibold">0</div>
+        </div>
+        <div class="p-2 rounded" style="background:var(--surface-2);">
+          <div class="text-xs" style="color:var(--text-muted);">总标记</div>
+          <div id="feedbackTotalCount" class="text-lg font-semibold">0</div>
+        </div>
+      </div>
+      <div id="feedbackReasonList" class="flex flex-wrap gap-1.5 mb-3"></div>
+      <div id="feedbackRecentList" class="space-y-1.5 max-h-44 overflow-y-auto text-xs"></div>
     </div>
   </div>
 </div>
@@ -1710,7 +1824,11 @@ let currentController = null;
 let archivedView = false;
 let cliView = false;
 let activeTagFilter = null;
+let sessionListRequestId = 0;
+let cliSessionListRequestId = 0;
 let dailyChart = null, toolsChart = null;
+let sessionFeedback = {};
+let feedbackPopover = null;
 
 // Token-level streaming state
 const streamingMessages = {}; // msgId -> { container, blocks: { [index]: {type, el, text} } }
@@ -1790,6 +1908,14 @@ const systemPromptInput = $('systemPromptInput');
 const toolUseOpenEl = $('toolUseOpen'), toolResultOpenEl = $('toolResultOpen');
 const notifyEnabledEl = $('notifyEnabled'), soundEnabledEl = $('soundEnabled');
 const urlAutoFetchEl = $('urlAutoFetch');
+const extensionStatusText = $('extensionStatusText');
+const generateExtensionTokenBtn = $('generateExtensionTokenBtn');
+const extensionTokenBox = $('extensionTokenBox');
+const extensionTokenValue = $('extensionTokenValue');
+const copyExtensionTokenBtn = $('copyExtensionTokenBtn');
+const downloadExtensionBtn = $('downloadExtensionBtn');
+const extensionPathText = $('extensionPathText');
+const extensionDefaultUrl = $('extensionDefaultUrl');
 const memoriesEditor = $('memoriesEditor'), newMemoryContent = $('newMemoryContent'), newMemoryScope = $('newMemoryScope'), addMemoryBtn = $('addMemoryBtn'), activeMemoryCount = $('activeMemoryCount');
 const promptsModal = $('promptsModal'), managePromptsBtn = $('managePrompts');
 const promptList = $('promptList'), promptsEditor = $('promptsEditor');
@@ -2192,6 +2318,200 @@ function addTextBlock(container, text) {
   });
   container.appendChild(block);
   postProcessRendered(block);
+}
+
+function assistantTextFromEvent(ev) {
+  const content = (ev && ev.message && Array.isArray(ev.message.content)) ? ev.message.content : [];
+  return content
+    .filter(block => block && block.type === 'text')
+    .map(block => block.text || '')
+    .join('\n')
+    .trim();
+}
+
+function assistantMessageKey(ev, eventIndex) {
+  const msgId = ev && ev.message && ev.message.id;
+  if (msgId) return `msg:${msgId}`;
+  if (eventIndex !== undefined && eventIndex !== null && eventIndex >= 0) return `event:${eventIndex}`;
+  return `tmp:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+}
+
+function currentFeedbackFor(messageKey) {
+  return sessionFeedback && sessionFeedback[messageKey] ? sessionFeedback[messageKey] : {};
+}
+
+const FEEDBACK_REASONS = [
+  ['inaccurate', '不准确'],
+  ['ignored', '没按要求'],
+  ['verbose', '太啰嗦'],
+  ['code-broken', '代码不可用'],
+  ['format', '格式不好'],
+  ['unsafe', '风险较高'],
+];
+
+function feedbackReasonLabel(value) {
+  const found = FEEDBACK_REASONS.find(([key]) => key === value);
+  return found ? found[1] : value;
+}
+
+function feedbackSummaryText(feedback) {
+  const parts = [];
+  if (feedback.rating === 'up') parts.push('已好评');
+  if (feedback.rating === 'down') parts.push('已差评');
+  if (feedback.starred) parts.push('已收藏');
+  if (feedback.reason) parts.push(feedbackReasonLabel(feedback.reason));
+  if (feedback.note) parts.push(feedback.note);
+  return parts.join(' · ');
+}
+
+function cssEscape(value) {
+  if (window.CSS && typeof CSS.escape === 'function') return CSS.escape(value);
+  return String(value).replace(/["\\]/g, '\\$&');
+}
+
+function renderFeedbackControls(container, meta = {}) {
+  if (!container || !meta.messageKey) return;
+  const existing = container.querySelector(`.message-feedback[data-message-key="${cssEscape(meta.messageKey)}"]`);
+  if (existing) {
+    existing.dataset.messageId = meta.messageId || existing.dataset.messageId || '';
+    existing.dataset.eventIndex = meta.eventIndex ?? existing.dataset.eventIndex ?? '';
+    existing.dataset.excerpt = meta.excerpt || existing.dataset.excerpt || '';
+    applyFeedbackState(meta.messageKey);
+    return;
+  }
+  const bar = document.createElement('div');
+  bar.className = 'message-feedback';
+  bar.dataset.messageKey = meta.messageKey;
+  bar.dataset.messageId = meta.messageId || '';
+  bar.dataset.eventIndex = meta.eventIndex ?? '';
+  bar.dataset.excerpt = meta.excerpt || '';
+  bar.innerHTML = `
+    <button type="button" class="feedback-btn" data-feedback-rating="up" title="好评：这条回答有帮助" aria-label="好评">👍</button>
+    <button type="button" class="feedback-btn" data-feedback-rating="down" title="差评：这条回答有问题" aria-label="差评">👎</button>
+    <button type="button" class="feedback-btn" data-feedback-star title="收藏：后续复用或统计" aria-label="收藏">⭐</button>
+    <button type="button" class="feedback-btn" data-feedback-detail title="添加原因或备注" aria-label="反馈详情">⋯</button>
+    <span class="feedback-note-pill hidden"></span>
+  `;
+  container.appendChild(bar);
+  applyFeedbackState(meta.messageKey);
+}
+
+function applyFeedbackState(messageKey) {
+  const feedback = currentFeedbackFor(messageKey);
+  chatInner.querySelectorAll(`.message-feedback[data-message-key="${cssEscape(messageKey)}"]`).forEach(bar => {
+    bar.querySelectorAll('[data-feedback-rating]').forEach(btn => {
+      btn.classList.toggle('active', !!feedback.rating && btn.dataset.feedbackRating === feedback.rating);
+    });
+    const star = bar.querySelector('[data-feedback-star]');
+    if (star) star.classList.toggle('active', !!feedback.starred);
+    const detail = bar.querySelector('[data-feedback-detail]');
+    if (detail) detail.classList.toggle('active', !!(feedback.reason || feedback.note));
+    const pill = bar.querySelector('.feedback-note-pill');
+    if (pill) {
+      const text = feedbackSummaryText(feedback);
+      pill.textContent = text;
+      pill.title = text;
+      pill.classList.toggle('hidden', !text);
+    }
+  });
+}
+
+async function saveFeedback(messageKey, patch = {}) {
+  if (!sessionId || !messageKey) return;
+  const current = currentFeedbackFor(messageKey);
+  const next = {
+    message_key: messageKey,
+    message_id: current.message_id || '',
+    event_index: current.event_index ?? -1,
+    rating: current.rating || '',
+    starred: !!current.starred,
+    reason: current.reason || '',
+    note: current.note || '',
+    message_excerpt: current.message_excerpt || '',
+    ...patch,
+  };
+  try {
+    const r = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/feedback`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(next),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    if (data.deleted) delete sessionFeedback[messageKey];
+    else if (data.feedback) sessionFeedback[messageKey] = data.feedback;
+    applyFeedbackState(messageKey);
+    renderFeedbackStats(data.stats || null);
+  } catch (e) {
+    toast('反馈保存失败：' + (e.message || e));
+  }
+}
+
+function closeFeedbackPopover() {
+  if (feedbackPopover) {
+    feedbackPopover.remove();
+    feedbackPopover = null;
+  }
+}
+
+function openFeedbackPopover(bar) {
+  closeFeedbackPopover();
+  const messageKey = bar.dataset.messageKey;
+  const feedback = currentFeedbackFor(messageKey);
+  const pop = document.createElement('div');
+  pop.className = 'feedback-popover';
+  pop.innerHTML = `
+    <div class="text-sm font-semibold mb-1">回答反馈</div>
+    <div class="feedback-reason-grid">
+      ${FEEDBACK_REASONS.map(([value, label]) => `<button type="button" class="feedback-reason ${feedback.reason === value ? 'active' : ''}" data-reason="${value}">${label}</button>`).join('')}
+    </div>
+    <textarea data-feedback-note rows="3" class="w-full px-2.5 py-2 text-sm rounded" style="background:var(--bg); border:1px solid var(--border); color:var(--text);" placeholder="备注（可选）">${escapeHtml(feedback.note || '')}</textarea>
+    <div class="mt-2 flex items-center justify-between gap-2">
+      <button type="button" data-feedback-clear class="px-3 py-1.5 text-xs rounded" style="background:var(--surface-2); color:var(--text-muted);">清除反馈</button>
+      <div class="flex gap-2">
+        <button type="button" data-feedback-cancel class="px-3 py-1.5 text-xs rounded" style="background:var(--surface-2); color:var(--text-muted);">取消</button>
+        <button type="button" data-feedback-save class="px-3 py-1.5 text-xs rounded" style="background:var(--accent); color:white;">保存</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(pop);
+  feedbackPopover = pop;
+  const rect = bar.getBoundingClientRect();
+  const left = Math.min(Math.max(12, rect.left), window.innerWidth - pop.offsetWidth - 12);
+  const top = Math.min(rect.bottom + 8, window.innerHeight - pop.offsetHeight - 12);
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+  let selectedReason = feedback.reason || '';
+  pop.querySelectorAll('[data-reason]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedReason = selectedReason === btn.dataset.reason ? '' : btn.dataset.reason;
+      pop.querySelectorAll('[data-reason]').forEach(b => b.classList.toggle('active', b.dataset.reason === selectedReason));
+    });
+  });
+  pop.querySelector('[data-feedback-cancel]').addEventListener('click', closeFeedbackPopover);
+  pop.querySelector('[data-feedback-clear]').addEventListener('click', async () => {
+    await saveFeedback(messageKey, {
+      message_id: bar.dataset.messageId || feedback.message_id || '',
+      event_index: bar.dataset.eventIndex ? Number(bar.dataset.eventIndex) : (feedback.event_index ?? -1),
+      message_excerpt: bar.dataset.excerpt || feedback.message_excerpt || '',
+      rating: '',
+      starred: false,
+      reason: '',
+      note: '',
+    });
+    closeFeedbackPopover();
+  });
+  pop.querySelector('[data-feedback-save]').addEventListener('click', async () => {
+    const note = pop.querySelector('[data-feedback-note]').value.trim();
+    await saveFeedback(messageKey, {
+      message_id: bar.dataset.messageId || feedback.message_id || '',
+      event_index: bar.dataset.eventIndex ? Number(bar.dataset.eventIndex) : (feedback.event_index ?? -1),
+      message_excerpt: bar.dataset.excerpt || feedback.message_excerpt || '',
+      reason: selectedReason,
+      note,
+    });
+    closeFeedbackPopover();
+  });
 }
 
 function detectCodeLang(preEl) {
@@ -3888,6 +4208,7 @@ function hideThinking(container) {
 
 function handleEvent(obj, container, options = {}) {
   const replay = !!options.replay;
+  const eventIndex = options.eventIndex ?? -1;
   // Route subagent inner events to the subagent panel; don't render them in the main timeline.
   // Skipped when re-rendering inside the subagent modal (would recurse infinitely).
   if (!options.skipSubagentRouting && obj && obj.parent_tool_use_id && subagentCards.has(obj.parent_tool_use_id)) {
@@ -3925,12 +4246,21 @@ function handleEvent(obj, container, options = {}) {
     const msgId = obj.message.id;
     const wasStreamed = msgId && streamedIds.has(msgId);
     const content = obj.message.content || [];
+    const answerText = assistantTextFromEvent(obj);
     if (!container) container = newAssistantBubble();
     for (const block of content) {
       if (wasStreamed && (block.type === 'text' || block.type === 'thinking')) continue;
       if (block.type === 'text') { hideThinking(container); addTextBlock(container, block.text || ''); }
       else if (block.type === 'tool_use') { hideThinking(container); addToolUseBlock(container, block.name, block.input, { id: block.id, pending: !replay }); }
       else if (block.type === 'thinking') { hideThinking(container); addThinkingBlock(container, block.thinking || ''); }
+    }
+    if (answerText) {
+      renderFeedbackControls(container, {
+        messageKey: assistantMessageKey(obj, eventIndex),
+        messageId: msgId || '',
+        eventIndex,
+        excerpt: answerText.slice(0, 500),
+      });
     }
     scrollBottom();
     return container;
@@ -3993,7 +4323,9 @@ function handleStreamEvent(ev, container) {
     const msgId = msg.id || ('stream-' + Date.now());
     if (!container) container = newAssistantBubble();
     artifactStreamGeneration += 1;
-    streamingMessages[msgId] = { container, blocks: {}, msgId };
+    streamingMessages[msgId] = { container, blocks: {}, msgId, messageKey: `msg:${msgId}` };
+    container.dataset.messageKey = `msg:${msgId}`;
+    container.dataset.messageId = msgId;
     streamedIds.add(msgId);
     lastStreamingMsgId = msgId;
     return container;
@@ -4121,12 +4453,75 @@ function handleStreamEvent(ev, container) {
     return container;
   }
 
-  if (t === 'message_stop') return container;
+  if (t === 'message_stop') {
+    const text = Object.values(state.blocks || {})
+      .filter(block => block && block.type === 'text')
+      .map(block => block.text || '')
+      .join('\n')
+      .trim();
+    if (text) {
+      renderFeedbackControls(state.container, {
+        messageKey: state.messageKey || (state.msgId ? `msg:${state.msgId}` : ''),
+        messageId: state.msgId || '',
+        eventIndex: -1,
+        excerpt: text.slice(0, 500),
+      });
+    }
+    return container;
+  }
   return container;
 }
 
 // ===== copy delegation =====
 document.addEventListener('click', (e) => {
+  if (feedbackPopover && !feedbackPopover.contains(e.target) && !e.target.closest('.message-feedback')) {
+    closeFeedbackPopover();
+  }
+  const feedbackRatingBtn = e.target.closest('[data-feedback-rating]');
+  if (feedbackRatingBtn) {
+    e.stopPropagation();
+    const bar = feedbackRatingBtn.closest('.message-feedback');
+    if (!bar) return;
+    const messageKey = bar.dataset.messageKey;
+    const current = currentFeedbackFor(messageKey);
+    const rating = feedbackRatingBtn.dataset.feedbackRating;
+    const nextRating = current.rating === rating ? '' : rating;
+    saveFeedback(messageKey, {
+      message_id: bar.dataset.messageId || '',
+      event_index: bar.dataset.eventIndex ? Number(bar.dataset.eventIndex) : -1,
+      rating: nextRating,
+      starred: !!current.starred,
+      reason: current.reason || '',
+      note: current.note || '',
+      message_excerpt: bar.dataset.excerpt || current.message_excerpt || '',
+    });
+    return;
+  }
+  const feedbackStarBtn = e.target.closest('[data-feedback-star]');
+  if (feedbackStarBtn) {
+    e.stopPropagation();
+    const bar = feedbackStarBtn.closest('.message-feedback');
+    if (!bar) return;
+    const messageKey = bar.dataset.messageKey;
+    const current = currentFeedbackFor(messageKey);
+    saveFeedback(messageKey, {
+      message_id: bar.dataset.messageId || '',
+      event_index: bar.dataset.eventIndex ? Number(bar.dataset.eventIndex) : -1,
+      rating: current.rating || '',
+      starred: !current.starred,
+      reason: current.reason || '',
+      note: current.note || '',
+      message_excerpt: bar.dataset.excerpt || current.message_excerpt || '',
+    });
+    return;
+  }
+  const feedbackDetailBtn = e.target.closest('[data-feedback-detail]');
+  if (feedbackDetailBtn) {
+    e.stopPropagation();
+    const bar = feedbackDetailBtn.closest('.message-feedback');
+    if (bar) openFeedbackPopover(bar);
+    return;
+  }
   const copyBtn = e.target.closest('button[data-copy]');
   if (copyBtn) {
     const text = decodeURIComponent(copyBtn.dataset.copy);
@@ -4457,6 +4852,74 @@ const draftKey = () => 'draft_' + (sessionId || 'new');
 function saveDraft() { localStorage.setItem(draftKey(), input.value); }
 function restoreDraft() { input.value = localStorage.getItem(draftKey()) || ''; updateTokenCount(); }
 function clearDraft() { localStorage.removeItem(draftKey()); }
+
+async function applyExtensionDraftFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const targetSessionId = params.get('session_id');
+  const draftId = params.get('extension_draft');
+  if (targetSessionId) {
+    try { await loadSession(targetSessionId); }
+    catch (e) { console.warn('failed to load session from url', e); }
+    try {
+      params.delete('session_id');
+      const next = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash;
+      history.replaceState(null, '', next);
+    } catch {}
+  }
+  if (!draftId) return;
+
+  try {
+    const r = await fetch('/api/extension/drafts/' + encodeURIComponent(draftId));
+    const draft = await r.json();
+    if (!r.ok) throw new Error(draft.detail || `HTTP ${r.status}`);
+    if (draft.cwd) {
+      cwdInput.value = draft.cwd;
+      refreshGitStatus();
+    }
+    if (draft.model !== undefined) {
+      modelSelect.value = draft.model || '';
+      LS.set('model', modelSelect.value);
+    }
+    if (draft.permission_mode) {
+      const mode = draft.permission_mode === 'default' ? 'free' : draft.permission_mode;
+      if ([...permSelect.options].some(opt => opt.value === mode)) {
+        permSelect.value = mode;
+        LS.set('permMode', mode);
+      }
+    }
+    if (draft.session_id) {
+      sessionId = draft.session_id;
+      sessionLabelText.textContent = '会话 ' + sessionId.slice(0, 8);
+      suggestTitleBtn.classList.remove('hidden');
+    } else if (!sessionId) {
+      startNewSession();
+    }
+    const message = draft.message || '';
+    const display = draft.display_message || message;
+    input.value = display;
+    updateTokenCount();
+    autosizeTextarea();
+    saveDraft();
+    const shouldRun = params.get('autorun') === '1' || draft.auto_run === true;
+    try {
+      params.delete('extension_draft');
+      params.delete('autorun');
+      const next = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash;
+      history.replaceState(null, '', next);
+    } catch {}
+    if (shouldRun && message.trim()) {
+      input.value = '';
+      updateTokenCount();
+      autosizeTextarea();
+      clearDraft();
+      sendRaw(message, display, []);
+    } else {
+      toast('已载入浏览器插件草稿');
+    }
+  } catch (e) {
+    toast('插件草稿载入失败：' + (e.message || e), { timeout: 4200 });
+  }
+}
 
 // ===== @ mention / slash picker =====
 let pickerItems = [];
@@ -5008,6 +5471,7 @@ newSessionBtn.addEventListener('click', () => startNewSession());
 function startNewSession() {
   hidePicker();
   sessionId = null;
+  sessionFeedback = {};
   titleLabel.textContent = '新会话';
   sessionLabelText.textContent = '尚未开始';
   suggestTitleBtn.classList.add('hidden');
@@ -5037,7 +5501,13 @@ searchInput.addEventListener('input', () => {
 
 viewActiveBtn.addEventListener('click', () => { archivedView = false; cliView = false; updateViewTabs(); refreshSessions(); });
 viewArchivedBtn.addEventListener('click', () => { archivedView = true; cliView = false; updateViewTabs(); refreshSessions(); });
-viewCliBtn.addEventListener('click', () => { cliView = true; archivedView = false; updateViewTabs(); renderCliSessionList(); });
+viewCliBtn.addEventListener('click', () => {
+  cliView = true;
+  archivedView = false;
+  sessionListRequestId++;
+  updateViewTabs();
+  renderCliSessionList();
+});
 
 function updateViewTabs() {
   updateTabStyles();
@@ -5061,15 +5531,23 @@ async function refreshTags() {
 }
 
 async function refreshSessions() {
+  if (cliView) {
+    updateViewTabs();
+    renderCliSessionList();
+    return;
+  }
+  const requestId = ++sessionListRequestId;
   try {
     const q = searchInput.value.trim();
+    const isArchivedRequest = archivedView;
     const params = new URLSearchParams();
     if (q) params.set('q', q);
-    if (archivedView) params.set('archived', 'true');
+    if (isArchivedRequest) params.set('archived', 'true');
     if (activeTagFilter) params.set('tag', activeTagFilter);
     const r = await fetch('/api/sessions?' + params.toString());
     if (!r.ok) return;
     const list = await r.json();
+    if (cliView || requestId !== sessionListRequestId || isArchivedRequest !== archivedView) return;
     if (list.length === 0) {
       sessionList.innerHTML = `<div class="text-xs text-gray-400 text-center py-4">${q ? '无匹配' : (archivedView ? '无归档' : '暂无历史')}</div>`;
       return;
@@ -5177,6 +5655,7 @@ async function loadSession(id) {
     if (!r.ok) return;
     const data = await r.json();
     sessionId = data.id;
+    sessionFeedback = data.feedback || {};
     titleLabel.textContent = data.title;
     sessionLabelText.textContent = '会话 ' + data.id.slice(0, 8);
     streamedIds.clear();
@@ -5195,17 +5674,17 @@ async function loadSession(id) {
     refreshGitStatus();
 
     let asstContainer = null;
-    for (const ev of data.events) {
+    data.events.forEach((ev, eventIndex) => {
       if (ev.type === 'user_input') {
         addUserMessage(ev.text || '', ev.images || [], { hasCheckpoint: !!ev.checkpoint, docs: ev.docs || [], fullText: ev.full_text || '', compacted: !!ev.compacted });
         asstContainer = null;
       } else if (ev.type === 'assistant' || ev.type === 'user') {
-        const c = handleEvent(ev, asstContainer, { replay: true });
+        const c = handleEvent(ev, asstContainer, { replay: true, eventIndex });
         if (c) asstContainer = c;
       } else {
-        handleEvent(ev, asstContainer, { replay: true });
+        handleEvent(ev, asstContainer, { replay: true, eventIndex });
       }
-    }
+    });
     if (!data.events.length) chatInner.appendChild(welcome);
     forceScrollBottom();
     highlightActiveSession();
@@ -5270,6 +5749,52 @@ async function refreshGitStatus() {
 cwdInput.addEventListener('change', refreshGitStatus);
 
 // ===== stats =====
+function renderFeedbackStats(feedback) {
+  if (!feedback) return;
+  const total = feedback.total || 0;
+  const up = feedback.up || 0;
+  const down = feedback.down || 0;
+  const starred = feedback.starred || 0;
+  const setText = (id, text) => { const el = $(id); if (el) el.textContent = text; };
+  setText('feedbackUpCount', up);
+  setText('feedbackDownCount', down);
+  setText('feedbackStarCount', starred);
+  setText('feedbackTotalCount', total);
+  setText('feedbackStatsSummary', total ? `${up} 好评 · ${down} 差评 · ${starred} 收藏` : '暂无标记');
+
+  const reasonList = $('feedbackReasonList');
+  if (reasonList) {
+    const reasons = feedback.reasons || [];
+    reasonList.innerHTML = reasons.length
+      ? reasons.map(r => `<span class="tag-chip">${escapeHtml(r.reason)} (${r.count})</span>`).join('')
+      : '<span class="text-xs" style="color:var(--text-subtle);">还没有差评原因</span>';
+  }
+
+  const recentList = $('feedbackRecentList');
+  if (recentList) {
+    const recent = feedback.recent || [];
+    recentList.innerHTML = recent.length
+      ? recent.map(item => {
+          const marks = [
+            item.rating === 'up' ? '👍' : '',
+            item.rating === 'down' ? '👎' : '',
+            item.starred ? '⭐' : '',
+          ].filter(Boolean).join(' ');
+          const title = item.session_title || item.session_id || '';
+          const reason = item.reason ? ` · ${feedbackReasonLabel(item.reason)}` : '';
+          const note = item.note ? ` · ${item.note}` : '';
+          return `<div class="p-2 rounded" style="background:var(--surface-2);">
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-medium truncate">${escapeHtml(title)}</span>
+              <span>${marks || '标记'}</span>
+            </div>
+            <div class="truncate mt-0.5" style="color:var(--text-muted);">${escapeHtml((item.message_excerpt || '无摘要') + reason + note)}</div>
+          </div>`;
+        }).join('')
+      : '<div class="text-xs" style="color:var(--text-subtle);">还没有消息反馈</div>';
+  }
+}
+
 async function refreshStats() {
   try {
     const r = await fetch('/api/stats');
@@ -5296,6 +5821,7 @@ async function refreshStats() {
     $('statSessions').textContent = d.total_sessions;
     $('statTurns').textContent = d.total_turns;
     $('statDuration').textContent = (d.total_duration_ms / 1000).toFixed(1) + 's';
+    renderFeedbackStats(d.feedback || null);
 
     if (d.daily && d.daily.length > 0) {
       if (dailyChart) dailyChart.destroy();
@@ -5317,6 +5843,74 @@ async function refreshStats() {
 }
 statsBar.addEventListener('click', () => openModal(statsModal));
 
+async function refreshExtensionStatus() {
+  if (!extensionStatusText) return;
+  try {
+    const r = await fetch('/api/extension/status');
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || r.status);
+    extensionStatusText.textContent = data.token_configured
+      ? '已启用，可在插件设置页粘贴 Token 使用'
+      : '未启用，请先生成 Token';
+    if (extensionPathText) {
+      extensionPathText.textContent = data.extension_path || '未找到插件文件，请重新安装 claude-web-ui';
+    }
+    if (extensionDefaultUrl) {
+      extensionDefaultUrl.textContent = data.default_service_url || 'http://127.0.0.1:8765';
+    }
+    if (downloadExtensionBtn) {
+      if (data.download_url) {
+        downloadExtensionBtn.href = data.download_url;
+        downloadExtensionBtn.classList.remove('hidden');
+      } else {
+        downloadExtensionBtn.classList.add('hidden');
+      }
+    }
+  } catch (e) {
+    extensionStatusText.textContent = '检测失败：' + (e.message || e);
+    if (extensionPathText) extensionPathText.textContent = '检测失败';
+    if (downloadExtensionBtn) downloadExtensionBtn.classList.add('hidden');
+  }
+}
+
+async function generateExtensionToken() {
+  if (!generateExtensionTokenBtn) return;
+  generateExtensionTokenBtn.disabled = true;
+  const oldText = generateExtensionTokenBtn.textContent;
+  generateExtensionTokenBtn.textContent = '生成中…';
+  try {
+    const r = await fetch('/api/extension/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reset: true }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || r.status);
+    extensionTokenValue.value = data.token || '';
+    extensionTokenBox.classList.remove('hidden');
+    if (extensionStatusText) extensionStatusText.textContent = 'Token 已生成，请复制到 Chrome 插件设置页';
+    try { await navigator.clipboard.writeText(data.token || ''); toast('Token 已复制'); }
+    catch { toast('Token 已生成'); }
+  } catch (e) {
+    toast('生成插件 Token 失败：' + (e.message || e), { timeout: 4200 });
+  } finally {
+    generateExtensionTokenBtn.disabled = false;
+    generateExtensionTokenBtn.textContent = oldText;
+  }
+}
+
+if (generateExtensionTokenBtn) generateExtensionTokenBtn.addEventListener('click', generateExtensionToken);
+if (copyExtensionTokenBtn) copyExtensionTokenBtn.addEventListener('click', async () => {
+  if (!extensionTokenValue || !extensionTokenValue.value) return;
+  try {
+    await navigator.clipboard.writeText(extensionTokenValue.value);
+    toast('Token 已复制');
+  } catch {
+    extensionTokenValue.select();
+    toast('请手动复制 Token');
+  }
+});
+
 // ===== modals =====
 function openModal(m) { m.classList.remove('hidden'); }
 function closeModal(m) { m.classList.add('hidden'); }
@@ -5330,6 +5924,7 @@ settingsBtn.addEventListener('click', () => {
   notifyEnabledEl.checked = settings.notifyEnabled;
   soundEnabledEl.checked = settings.soundEnabled;
   urlAutoFetchEl.checked = settings.urlAutoFetch;
+  refreshExtensionStatus();
   refreshMemories();
   openModal(settingsModal);
 });
@@ -6222,17 +6817,20 @@ document.querySelectorAll('.empty-card').forEach(card => {
 // ===== sidebar tab styling =====
 function updateTabStyles() {
   [viewActiveBtn, viewArchivedBtn, viewCliBtn].forEach(b => {
-    if (b) b.style.color = 'var(--text-subtle)';
+    if (b) b.classList.remove('tab-active');
   });
   const activeBtn = cliView ? viewCliBtn : (archivedView ? viewArchivedBtn : viewActiveBtn);
-  if (activeBtn) activeBtn.style.color = 'var(--text)';
+  if (activeBtn) activeBtn.classList.add('tab-active');
 }
 
 // ===== CLI session list (sidebar) =====
 async function renderCliSessionList() {
+  updateViewTabs();
+  const requestId = ++cliSessionListRequestId;
   sessionList.innerHTML = '<div class="text-xs text-center py-6" style="color:var(--text-subtle);">加载中...</div>';
   try {
     const data = await fetch('/api/cli-sessions/scan').then(r => r.json());
+    if (!cliView || requestId !== cliSessionListRequestId) return;
     const sessions = data.sessions || [];
     if (!sessions.length) {
       sessionList.innerHTML = '<div class="text-xs text-center py-6" style="color:var(--text-subtle);">未找到 CLI 会话</div>';
@@ -6241,12 +6839,16 @@ async function renderCliSessionList() {
     sessionList.innerHTML = sessions.map(s => {
       const alreadyImported = s.already_imported;
       const date = s.updated_at ? new Date(s.updated_at * 1000).toLocaleDateString('zh-CN', {month:'numeric',day:'numeric'}) : '';
-      const preview = (s.summary || s.first_message || '').slice(0, 40);
+      const title = (s.title || s.first_message || s.session_id || '').trim();
+      const summary = (s.summary || s.first_message || '').trim();
+      const project = s.cwd ? s.cwd.split('/').filter(Boolean).pop() : '';
+      const meta = [date, project, `${s.message_count || 0} 条消息`].filter(Boolean).join(' · ');
       return `<div class="px-2 py-1.5 group" data-cli-id="${s.session_id}">
         <div class="flex items-start justify-between gap-1 rounded-lg px-2 py-2 cursor-default" style="background:var(--surface);">
           <div class="flex-1 min-w-0">
-            <div class="text-[13px] truncate" style="color:var(--text);">${preview || s.session_id.slice(0,8)}</div>
-            <div class="text-[11px] mt-0.5" style="color:var(--text-subtle);">${date}${s.cwd ? ' · ' + s.cwd.split('/').pop() : ''}</div>
+            <div class="text-[13px] font-medium truncate" style="color:var(--text);" title="${escapeHtml(title)}">${escapeHtml(title || s.session_id.slice(0,8))}</div>
+            <div class="text-[12px] mt-0.5 truncate" style="color:var(--text-muted);" title="${escapeHtml(summary)}">${escapeHtml(summary || '暂无简介')}</div>
+            <div class="text-[11px] mt-0.5 truncate" style="color:var(--text-subtle);" title="${escapeHtml(s.cwd || '')}">${escapeHtml(meta)}</div>
           </div>
           <button class="cli-import-one shrink-0 text-[11px] px-2 py-0.5 rounded transition-colors" data-sid="${s.session_id}"
             style="background:${alreadyImported ? 'transparent' : 'var(--accent,#f97316)'}; color:${alreadyImported ? 'var(--text-subtle)' : '#fff'}; border:1px solid ${alreadyImported ? 'var(--border)' : 'transparent'};"
@@ -6271,6 +6873,7 @@ async function renderCliSessionList() {
       });
     });
   } catch(e) {
+    if (!cliView || requestId !== cliSessionListRequestId) return;
     sessionList.innerHTML = '<div class="text-xs text-center py-6" style="color:var(--text-subtle);">加载失败</div>';
   }
 }
@@ -6940,6 +7543,7 @@ refreshMemories();
 refreshStats();
 refreshTags();
 refreshGitStatus();
+applyExtensionDraftFromUrl();
 setInterval(refreshSessions, 30000);
 setInterval(refreshStats, 60000);
 
