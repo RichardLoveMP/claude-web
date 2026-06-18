@@ -40,7 +40,7 @@ pip install claude-web-ui && claude-web
 - 多轮对话（基于 `claude --resume`）
 - 停止正在运行的任务
 - **活跃会话保温**：每个会话保留一个持久 claude 进程，后续轮次跳过冷启动和 MCP 握手（无 MCP 省 1-2s，重度 MCP 用户省 5-15s/轮）
-- **Agent Loop 自主工作模式**：给 Claude 一个目标、轮数和 token 预算，它会自动执行、测试、修复，直到完成、阻塞、停止或预算用完
+- **Agent Loop 自主工作模式**：给 Claude 一个目标、轮数和 token 预算，后端 job 会自动连续执行、测试、失败重试、修复，直到完成、阻塞、停止或预算用完
 - **跟进建议**：回答后自动生成 3 个「你可能想继续问」的追问按钮
 - **会话分叉**：基于任意历史消息编辑 / 重新生成，原会话保留
 - **思考动画**：等待响应时用跳动圆点 + 扫光文字提示
@@ -106,7 +106,7 @@ pip install claude-web-ui && claude-web
 
 ### 🎓 上手 & 引导
 - **首次启动 5 步交互引导**：高亮 UI 控件 + 浮层 tooltip，半分钟学会主功能
-- **What's New 弹窗**：升级到新版本后右下角提示新增/破坏性变更，纯修复版本只显示小红点不打扰
+- **版本更新提醒**：启动后会轻量检查 PyPI 最新版，发现新版时右下角提示并可一键复制升级命令；已升级到新版本后会显示 What's New
 - **帮助面板（顶栏 `?`）**：快捷键速查 / 使用技巧 / 完整更新日志 / 一键重看引导
 - **新会话空状态**：4 张示例 prompt 卡片（代码审查 / 技术解释 / 写工具 / Mermaid）一键填入
 
@@ -206,7 +206,7 @@ PORT=9000 python server.py
 
 ### Agent Loop 自主工作
 
-点击输入框工具栏的循环按钮打开 Agent Loop，填写目标、最多轮数、token 预算和可选测试命令。Claude 会按“执行 → 测试 → 修复 → 再验证”的节奏连续迭代，直到它在回复末尾输出 `AGENT_LOOP_DONE`、`AGENT_LOOP_BLOCKED`，或达到停止 / 预算 / 轮数上限。
+点击输入框工具栏的循环按钮打开 Agent Loop，填写目标、最多轮数、token 预算和可选测试命令。后端会创建一个 Agent Loop job，连续驱动 Claude 按“执行 → 测试 → 修复 → 再验证”的节奏迭代，直到 Claude 在回复末尾输出 `AGENT_LOOP_DONE`、`AGENT_LOOP_BLOCKED`，或达到停止 / 预算 / 轮数上限。运行中刷新页面或重新打开同一会话时，前端会恢复订阅仍在运行的 job。
 
 适合这类任务：
 
@@ -214,7 +214,7 @@ PORT=9000 python server.py
 - “修复当前报错，直到检查通过”
 - “审查这组改动，能修的直接修，最后总结”
 
-运行期间输入框会显示状态条，可随时点「停止」。勾选浏览器通知后，完成、阻塞或达到预算时会弹系统通知。
+如果填写了测试命令，后端会在每轮 Claude 回复后自动运行该命令，把退出码、stdout、stderr 喂给下一轮 Claude；如果留空，会按 `package.json`、`Makefile`、Python 项目标记自动检测常见测试命令。单轮 Claude 调用失败会最多自动重试 2 次，连续 3 次遇到相同测试失败会暂停并提示人工介入。运行期间输入框会显示状态条，可随时点「停止」。勾选浏览器通知后，完成、阻塞或达到预算时会弹系统通知。
 
 ### Chrome 插件：当前页面 / 选中即问
 
@@ -332,6 +332,10 @@ claude-web/
 |------|------|------|
 | `/api/chat` | POST | 主对话，SSE 流式返回 |
 | `/api/chat/stop/{session_id}` | POST | 停止正在运行的会话 |
+| `/api/agent-loop/start` | POST | 启动后端 Agent Loop job（目标、轮数、token 预算、可选测试命令） |
+| `/api/agent-loop/active` | GET | 查询当前仍在运行的 Agent Loop job，可按 `session_id` 过滤 |
+| `/api/agent-loop/{job_id}/stream` | GET | 订阅 Agent Loop job 事件流，包含 Claude chat 事件和测试结果；可用 `from` 跳过已收到事件 |
+| `/api/agent-loop/{job_id}/stop` | POST | 请求停止 Agent Loop job、当前 Claude turn 和正在运行的测试命令 |
 | `/api/extension/status` | GET | Chrome 插件检测服务和 token 状态 |
 | `/api/extension/token` | POST | 生成 / 重置浏览器插件 token |
 | `/api/extension/ask` | POST | 插件选中即问，SSE 流式返回并写入会话历史 |
@@ -376,6 +380,7 @@ claude-web/
 | `/api/mcp/servers` | GET | 列出所有 MCP server（含 disabled / 多 scope） |
 | `/api/mcp/servers/{name}` | POST/PATCH/DELETE | 新增 / 修改 / 删除 MCP server |
 | `/api/version` | GET | 当前后端版本（前端用于检测升级） |
+| `/api/update-check` | GET | 检查 PyPI 最新版本，返回是否有新版和升级命令（失败静默缓存） |
 | `/changelog.json` | GET | 更新日志（用于 What's New 弹窗 + 帮助面板） |
 
 ---
@@ -402,7 +407,7 @@ claude-web/
 - [x] 文档上传（PDF / DOCX / XLSX / XLS / CSV / TSV / TXT / MD / JSON / LOG）和 URL 自动抓取上下文
 - [x] 联网搜索开关、`@` 文件 / 会话 / 提示词 / 记忆引用、Token 估算、草稿自动保存、提示词模板库
 - [x] Slash 命令菜单（`/new` `/clear` `/fork` `/compact` `/init` + 内置 / 自定义模板）
-- [x] Agent Loop 自主工作模式（目标 + 轮数 + token 预算，自动执行 / 测试 / 修复，可停止和完成通知）
+- [x] Agent Loop 自主工作模式（后端 job、目标 + 轮数 + token 预算、自动执行 / 测试 / 修复、失败重试、重复失败暂停、测试命令自动检测、可停止和完成通知）
 - [x] Prompt 优化器（本地黄金样本库、按任务类型沉淀个人规则、相似成功样本、三档改写、一键采用）
 - [x] Chrome 当前页面 / 选中即问插件（点击图标打开 Side Panel、读取当前页、右键解释 / 审查 / 改写 / 生成测试，可转入完整 Web 会话）
 - [x] Mermaid / LaTeX 渲染、图片 Lightbox、代码块复制与本地运行

@@ -53,6 +53,9 @@ _EXTENSION_TOKEN_CREATED_META_KEY = "extension_token_created_at_v1"
 _EXTENSION_DRAFT_TTL_SECONDS = 10 * 60
 _EXTENSION_MAX_SELECTED_CHARS = 40_000
 _EXTENSION_READONLY_DISALLOWED_TOOLS = ["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"]
+_UPDATE_CHECK_URL = "https://pypi.org/pypi/claude-web-ui/json"
+_UPDATE_CHECK_TTL_SECONDS = 6 * 60 * 60
+_update_check_cache: Dict[str, object] = {"ts": 0.0, "data": None}
 
 HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -100,6 +103,32 @@ _MAX_EVENT_LOCKS = 1024
 _stats_backfill_lock: Optional[asyncio.Lock] = None
 _stats_backfill_done = False
 _settings_write_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _version_tuple(value: str) -> Tuple[int, ...]:
+    parts = re.findall(r"\d+", str(value or ""))
+    return tuple(int(part) for part in parts[:4]) or (0,)
+
+
+@dataclass
+class AgentLoopJob:
+    id: str
+    session_id: str
+    created_at: float
+    updated_at: float
+    status: str = "running"
+    events: List[dict] = field(default_factory=list)
+    condition: asyncio.Condition = field(default_factory=asyncio.Condition)
+    stop_requested: bool = False
+    task: Optional[asyncio.Task] = None
+    test_process: Optional[asyncio.subprocess.Process] = None
+
+
+_agent_loop_jobs: Dict[str, AgentLoopJob] = {}
+_AGENT_LOOP_JOB_TTL_SECONDS = 60 * 60
+_AGENT_LOOP_MAX_EVENTS = 4000
+_AGENT_LOOP_MAX_RETRIES = 2
+_AGENT_LOOP_STUCK_THRESHOLD = 3
 
 
 def _settings_lock_for(path: Path) -> asyncio.Lock:
@@ -1004,6 +1033,22 @@ class ChatRequest(BaseModel):
     # badges on the user message. Not used to build the prompt — the doc text
     # is already embedded in `message` by the client.
     docs: Optional[List[dict]] = None
+
+
+class AgentLoopStartRequest(BaseModel):
+    goal: str
+    session_id: Optional[str] = None
+    cwd: Optional[str] = None
+    model: Optional[str] = None
+    system_prompt: Optional[str] = None
+    permission_mode: Optional[str] = None
+    allowed_tools: Optional[List[str]] = None
+    disallowed_tools: Optional[List[str]] = None
+    max_turns: Optional[int] = 5
+    token_budget: Optional[int] = 30000
+    test_command: Optional[str] = ""
+    notify_on_finish: Optional[bool] = True
+    force_new: Optional[bool] = True
 
 
 class PromptRequest(BaseModel):
@@ -2963,6 +3008,523 @@ async def chat(req: ChatRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+def _agent_loop_prune_jobs() -> None:
+    now = time.time()
+    stale = [
+        job_id for job_id, job in _agent_loop_jobs.items()
+        if job.status != "running" and now - job.updated_at > _AGENT_LOOP_JOB_TTL_SECONDS
+    ]
+    for job_id in stale:
+        _agent_loop_jobs.pop(job_id, None)
+
+
+def _agent_loop_job_summary(job: AgentLoopJob) -> dict:
+    return {
+        "job_id": job.id,
+        "session_id": job.session_id,
+        "status": job.status,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+        "event_count": len(job.events),
+    }
+
+
+async def _agent_loop_emit(job: AgentLoopJob, event: dict) -> None:
+    payload = {**event, "ts": event.get("ts") or time.time()}
+    async with job.condition:
+        job.events.append(payload)
+        if len(job.events) > _AGENT_LOOP_MAX_EVENTS:
+            job.events = job.events[-_AGENT_LOOP_MAX_EVENTS:]
+        job.updated_at = time.time()
+        if payload.get("type") == "agent_loop_done":
+            job.status = payload.get("status") or "done"
+        job.condition.notify_all()
+
+
+def _agent_loop_usage_total(usage: Optional[dict]) -> int:
+    if not isinstance(usage, dict):
+        return 0
+    return int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0) + int(usage.get("cache_read_input_tokens") or 0) + int(usage.get("cache_creation_input_tokens") or 0)
+
+
+def _agent_loop_detect_test_command(cwd: str) -> Tuple[str, str]:
+    root = Path(cwd)
+    package_json = root / "package.json"
+    if package_json.is_file():
+        try:
+            data = json.loads(package_json.read_text(encoding="utf-8"))
+            scripts = data.get("scripts") if isinstance(data, dict) else None
+            if isinstance(scripts, dict) and isinstance(scripts.get("test"), str) and scripts["test"].strip():
+                return "npm test", "package.json"
+        except Exception:
+            pass
+    if (root / "Makefile").is_file() or (root / "makefile").is_file():
+        return "make test", "Makefile"
+    python_markers = ("pyproject.toml", "pytest.ini", "tox.ini", "setup.cfg")
+    if any((root / name).is_file() for name in python_markers):
+        return "pytest", "python project"
+    return "", ""
+
+
+def _agent_loop_error_summary(error: Optional[dict]) -> str:
+    if not isinstance(error, dict):
+        return "本轮没有返回明确错误。"
+    parts = []
+    msg = error.get("message") or error.get("detail") or error.get("type") or "unknown error"
+    parts.append(str(msg))
+    denials = error.get("permission_denials")
+    if isinstance(denials, list) and denials:
+        tools = sorted({
+            item.get("tool_name")
+            for item in denials
+            if isinstance(item, dict) and item.get("tool_name")
+        })
+        parts.append(f"权限拒绝工具：{', '.join(tools) or '未知工具'}。")
+    return _clip_text("\n".join(parts), 4000)
+
+
+def _agent_loop_failure_retry_prompt(goal: str, turn: int, max_turns: int, used_tokens: int, token_budget: int, test_command: str, error: Optional[dict], retry_index: int, max_retries: int) -> str:
+    lines = [
+        "继续 Agent Loop：上一轮 Claude 调用失败，需要先恢复。",
+        "",
+        f"目标：{goal}",
+        f"当前进度：准备开始第 {turn} / {max_turns} 轮。已用约 {used_tokens} / {token_budget} tokens。",
+        f"这是失败后的第 {retry_index} / {max_retries} 次自动重试。",
+        "",
+        "上一轮错误：",
+        "```text",
+        _agent_loop_error_summary(error),
+        "```",
+    ]
+    if test_command:
+        lines.append(f"后端固定测试命令：{test_command}")
+    lines.extend([
+        "",
+        "请根据错误调整做法，继续执行、测试、修复。若你判断无法继续，请在回答最后单独写一行：AGENT_LOOP_BLOCKED。若已经完成并验证通过，请写：AGENT_LOOP_DONE。",
+    ])
+    return "\n".join(lines)
+
+
+def _agent_loop_test_failure_signature(result: Optional[dict]) -> Optional[Tuple[int, str]]:
+    if not isinstance(result, dict):
+        return None
+    returncode = result.get("returncode")
+    if returncode == 0:
+        return None
+    text = "\n".join([
+        result.get("stderr") or "",
+        result.get("stdout") or "",
+    ])
+    lines = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if re.search(r"(FAILED|ERROR|Error|Exception|Traceback|AssertionError|Cannot|No such file|not found|failed)", line):
+            lines.append(line)
+        if len(lines) >= 8:
+            break
+    if not lines:
+        lines = [line.strip() for line in text.splitlines() if line.strip()][:8]
+    normalized = "\n".join(lines)
+    normalized = re.sub(r"0x[0-9a-fA-F]+", "0xADDR", normalized)
+    normalized = re.sub(r"\b\d+(?:\.\d+)?s\b", "Ns", normalized)
+    normalized = re.sub(r"\b\d+\b", "N", normalized)
+    normalized = _clip_text(normalized, 2000)
+    digest = hashlib.sha256(normalized.encode("utf-8", errors="replace")).hexdigest()[:16]
+    return int(returncode if returncode is not None else -1), digest
+
+
+def _agent_loop_text_from_event(obj: dict, streamed_ids: Set[str]) -> str:
+    if obj.get("type") == "stream_event":
+        event = obj.get("event") or {}
+        if event.get("type") == "message_start":
+            msg_id = ((event.get("message") or {}).get("id") or "").strip()
+            if msg_id:
+                streamed_ids.add(msg_id)
+        if event.get("type") == "content_block_delta":
+            delta = event.get("delta") or {}
+            if delta.get("type") == "text_delta":
+                return delta.get("text") or ""
+        return ""
+    if obj.get("type") == "assistant":
+        message = obj.get("message") or {}
+        msg_id = (message.get("id") or "").strip()
+        if msg_id and msg_id in streamed_ids:
+            return ""
+        content = message.get("content") or []
+        return "\n".join(
+            block.get("text") or ""
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return ""
+
+
+def _agent_loop_initial_prompt(goal: str, max_turns: int, token_budget: int, test_command: str) -> str:
+    return "\n".join([
+        "进入 Agent Loop 自主工作模式。",
+        "",
+        f"目标：{goal}",
+        f"预算：最多 {max_turns} 轮，约 {token_budget} tokens。",
+        test_command
+        and f"系统会在每轮结束后自动运行测试命令：{test_command}"
+        or "系统未配置固定测试命令；请你根据项目自行选择合适的检查/测试命令。",
+        "",
+        "请按以下循环工作：",
+        "1. 明确下一步计划。",
+        "2. 修改代码或文件。",
+        "3. 如有必要，自行运行补充检查。",
+        "4. 如果失败，分析错误并继续修复。",
+        "5. 如果目标已经完成且验证通过，请在回答最后单独写一行：AGENT_LOOP_DONE。",
+        "6. 如果无法继续，请在回答最后单独写一行：AGENT_LOOP_BLOCKED，并说明阻塞原因。",
+    ])
+
+
+def _normalize_agent_loop_test_command(command: str) -> str:
+    value = (command or "").strip()
+    if not value:
+        return ""
+    if len(value) > 500:
+        raise HTTPException(status_code=400, detail="test_command too long")
+    if "\n" in value or "\r" in value:
+        raise HTTPException(status_code=400, detail="test_command must be a single line")
+    return value
+
+
+def _agent_loop_continue_prompt(goal: str, turn: int, max_turns: int, used_tokens: int, token_budget: int, test_command: str, test_result: Optional[dict]) -> str:
+    lines = [
+        "继续 Agent Loop。",
+        "",
+        f"目标：{goal}",
+        f"当前进度：准备开始第 {turn} / {max_turns} 轮。已用约 {used_tokens} / {token_budget} tokens。",
+    ]
+    if test_command and test_result:
+        stdout = _clip_text(test_result.get("stdout") or "", 6000)
+        stderr = _clip_text(test_result.get("stderr") or "", 4000)
+        lines.extend([
+            "",
+            "上一轮后端自动测试结果：",
+            f"命令：{test_result.get('command') or test_command}",
+            f"退出码：{test_result.get('returncode')}",
+            f"是否超时：{'是' if test_result.get('timed_out') else '否'}",
+        ])
+        if stdout:
+            lines.extend(["", "stdout：", "```text", stdout, "```"])
+        if stderr:
+            lines.extend(["", "stderr：", "```text", stderr, "```"])
+    elif test_command:
+        lines.append(f"系统配置了测试命令：{test_command}，但上一轮没有可用测试结果。")
+    else:
+        lines.append("请继续自行选择合适的测试/检查命令。")
+    lines.extend([
+        "",
+        "请继续执行、测试、修复。若已经完成并验证通过，请在回答最后单独写一行：AGENT_LOOP_DONE。若无法继续，请写：AGENT_LOOP_BLOCKED。",
+    ])
+    return "\n".join(lines)
+
+
+async def _agent_loop_run_test(job: AgentLoopJob, command: str, cwd: str, timeout: int = 120) -> dict:
+    started = time.time()
+    result = {
+        "command": command,
+        "returncode": None,
+        "stdout": "",
+        "stderr": "",
+        "timed_out": False,
+        "duration_ms": 0,
+    }
+    await _agent_loop_emit(job, {"type": "agent_loop_test_start", "command": command})
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "bash", "-lc", command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+            limit=4 * 1024 * 1024,
+        )
+        job.test_process = proc
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            result["timed_out"] = True
+            proc.kill()
+            stdout, stderr = await proc.communicate()
+        result["returncode"] = proc.returncode if proc.returncode is not None else -1
+        result["stdout"] = stdout.decode("utf-8", errors="replace")[:50_000]
+        result["stderr"] = stderr.decode("utf-8", errors="replace")[:20_000]
+    except FileNotFoundError as e:
+        result["returncode"] = -1
+        result["stderr"] = f"test runner not found: {e}"
+    except Exception as e:
+        result["returncode"] = -1
+        result["stderr"] = str(e)
+    finally:
+        job.test_process = None
+        result["duration_ms"] = int((time.time() - started) * 1000)
+    await _agent_loop_emit(job, {"type": "agent_loop_test_result", "result": result})
+    return result
+
+
+async def _agent_loop_chat_turn(job: AgentLoopJob, req: ChatRequest, turn: int) -> dict:
+    response = await chat(req)
+    last_result = None
+    assistant_text: List[str] = []
+    stream_error = None
+    streamed_ids: Set[str] = set()
+    async for chunk in response.body_iterator:
+        text = chunk.decode("utf-8", errors="replace") if isinstance(chunk, bytes) else str(chunk)
+        for part in text.split("\n\n"):
+            line = next((ln for ln in part.splitlines() if ln.startswith("data: ")), "")
+            if not line:
+                continue
+            try:
+                obj = json.loads(line[6:])
+            except json.JSONDecodeError:
+                continue
+            if obj.get("type") == "user_input":
+                continue
+            if obj.get("type") == "meta" and obj.get("has_checkpoint"):
+                await _agent_loop_emit(job, {"type": "agent_loop_checkpoint", "turn": turn, "session_id": obj.get("session_id")})
+            if obj.get("type") in {"error", "permission_error"}:
+                stream_error = obj
+            if obj.get("type") == "result":
+                last_result = obj
+                denials = obj.get("permission_denials")
+                if isinstance(denials, list) and denials:
+                    tool_names = sorted({
+                        item.get("tool_name")
+                        for item in denials
+                        if isinstance(item, dict) and item.get("tool_name")
+                    })
+                    stream_error = {
+                        "type": "permission_error",
+                        "message": f"Claude 尝试使用 {', '.join(tool_names) or '工具'} 但被权限拒绝（共 {len(denials)} 次）。",
+                        "permission_denials": denials,
+                    }
+            assistant_text.append(_agent_loop_text_from_event(obj, streamed_ids))
+            await _agent_loop_emit(job, {"type": "chat_event", "event": obj})
+    return {
+        "ok": stream_error is None,
+        "error": stream_error,
+        "usage": (last_result or {}).get("usage") if last_result else None,
+        "text": "".join(assistant_text).strip(),
+    }
+
+
+async def _agent_loop_runner(job: AgentLoopJob, req: AgentLoopStartRequest) -> None:
+    final_status = "done"
+    final_message = "Agent Loop 已完成"
+    try:
+        goal = (req.goal or "").strip()
+        max_turns = max(1, min(int(req.max_turns or 5), 20))
+        token_budget = max(1000, min(int(req.token_budget or 30000), 1_000_000))
+        test_command = _normalize_agent_loop_test_command(req.test_command or "")
+        cwd = (req.cwd or "").strip()
+        if not cwd:
+            with db_connect() as conn:
+                row = conn.execute("SELECT cwd FROM sessions WHERE id = ?", (job.session_id,)).fetchone()
+            cwd = (row["cwd"] if row and row["cwd"] else "") or os.path.expanduser("~")
+        cwd = str(Path(os.path.expanduser(cwd)).resolve())
+        if not Path(cwd).is_dir():
+            raise HTTPException(status_code=400, detail=f"invalid cwd: {cwd}")
+        test_command_source = "manual" if test_command else ""
+        if not test_command:
+            detected_command, detected_source = _agent_loop_detect_test_command(cwd)
+            if detected_command:
+                test_command = _normalize_agent_loop_test_command(detected_command)
+                test_command_source = detected_source
+        used_tokens = 0
+        last_test_result = None
+        last_error = None
+        retry_count = 0
+        prior_failure_sig = None
+        repeated_failure_count = 0
+        await _agent_loop_emit(job, {"type": "agent_loop_started", "job_id": job.id, "session_id": job.session_id, "max_turns": max_turns, "token_budget": token_budget, "test_command": test_command, "test_command_source": test_command_source})
+        turn = 1
+        while turn <= max_turns:
+            if job.stop_requested:
+                final_status = "stopped"
+                final_message = "Agent Loop 已停止"
+                break
+            if last_error is not None:
+                retry_count += 1
+                prompt = _agent_loop_failure_retry_prompt(goal, turn, max_turns, used_tokens, token_budget, test_command, last_error, retry_count, _AGENT_LOOP_MAX_RETRIES)
+                display = f"重试 Agent Loop（{retry_count}/{_AGENT_LOOP_MAX_RETRIES}）：{goal}"
+                await _agent_loop_emit(job, {"type": "agent_loop_retry", "turn": turn, "retry": retry_count, "max_retries": _AGENT_LOOP_MAX_RETRIES, "error": last_error})
+            else:
+                retry_count = 0
+                prompt = (
+                    _agent_loop_initial_prompt(goal, max_turns, token_budget, test_command)
+                    if turn == 1
+                    else _agent_loop_continue_prompt(goal, turn, max_turns, used_tokens, token_budget, test_command, last_test_result)
+                )
+                display = goal if turn == 1 else f"继续 Agent Loop：{goal}"
+            await _agent_loop_emit(job, {"type": "agent_loop_turn_start", "turn": turn, "max_turns": max_turns, "used_tokens": used_tokens, "token_budget": token_budget})
+            await _agent_loop_emit(job, {"type": "agent_loop_user_message", "turn": turn, "text": display})
+            chat_req = ChatRequest(
+                message=prompt,
+                session_id=job.session_id,
+                cwd=cwd,
+                model=req.model,
+                system_prompt=req.system_prompt,
+                display_message=display,
+                permission_mode=req.permission_mode,
+                allowed_tools=req.allowed_tools,
+                disallowed_tools=req.disallowed_tools,
+                force_new=(req.force_new is not False and turn == 1),
+            )
+            result = await _agent_loop_chat_turn(job, chat_req, turn)
+            used_tokens += _agent_loop_usage_total(result.get("usage"))
+            await _agent_loop_emit(job, {"type": "agent_loop_turn_done", "turn": turn, "used_tokens": used_tokens, "token_budget": token_budget})
+            if job.stop_requested:
+                final_status = "stopped"
+                final_message = "Agent Loop 已停止"
+                break
+            if not result.get("ok"):
+                last_error = result.get("error") or {"type": "error", "message": "unknown Agent Loop turn failure"}
+                if retry_count >= _AGENT_LOOP_MAX_RETRIES or turn >= max_turns:
+                    final_status = "blocked"
+                    final_message = "Agent Loop 连续失败，可能需要人工介入"
+                    await _agent_loop_emit(job, {"type": "agent_loop_blocked", "reason": "turn_error_retries_exhausted", "turn": turn, "error": last_error})
+                    break
+                continue
+            last_error = None
+            text = result.get("text") or ""
+            done_signal = bool(re.search(r"\bAGENT_LOOP_DONE\b", text, re.I))
+            blocked_signal = bool(re.search(r"\bAGENT_LOOP_BLOCKED\b", text, re.I))
+            if blocked_signal:
+                final_status = "blocked"
+                final_message = "Agent Loop 已阻塞"
+                break
+            if test_command and not job.stop_requested:
+                last_test_result = await _agent_loop_run_test(job, test_command, cwd)
+                failure_sig = _agent_loop_test_failure_signature(last_test_result)
+                if failure_sig and failure_sig == prior_failure_sig:
+                    repeated_failure_count += 1
+                elif failure_sig:
+                    prior_failure_sig = failure_sig
+                    repeated_failure_count = 1
+                else:
+                    prior_failure_sig = None
+                    repeated_failure_count = 0
+                if done_signal and last_test_result.get("returncode") == 0:
+                    final_status = "done"
+                    final_message = "Agent Loop 已完成，测试已通过"
+                    break
+                if done_signal and last_test_result.get("returncode") != 0:
+                    await _agent_loop_emit(job, {"type": "agent_loop_test_failed_after_done", "turn": turn})
+                if repeated_failure_count >= _AGENT_LOOP_STUCK_THRESHOLD:
+                    final_status = "blocked"
+                    final_message = "Agent Loop 连续遇到相同测试失败，可能需要人工介入"
+                    await _agent_loop_emit(job, {"type": "agent_loop_stuck", "turn": turn, "repeat_count": repeated_failure_count, "returncode": last_test_result.get("returncode")})
+                    break
+            elif done_signal:
+                final_status = "done"
+                final_message = "Agent Loop 已完成"
+                break
+            if used_tokens >= token_budget:
+                final_status = "budget"
+                final_message = "Agent Loop 已达到 token 上限"
+                break
+            if turn == max_turns:
+                final_status = "turn_limit"
+                final_message = "Agent Loop 已达到最多轮数"
+                break
+            turn += 1
+    except Exception as e:
+        final_status = "error"
+        detail = getattr(e, "detail", None)
+        final_message = f"Agent Loop 出错：{detail or str(e)}"
+        await _agent_loop_emit(job, {"type": "agent_loop_error", "message": detail or str(e)})
+    finally:
+        if job.test_process and job.test_process.returncode is None:
+            try:
+                job.test_process.kill()
+            except ProcessLookupError:
+                pass
+        await _agent_loop_emit(job, {"type": "agent_loop_done", "status": final_status, "message": final_message, "session_id": job.session_id})
+
+
+@app.get("/api/agent-loop/active")
+async def active_agent_loop(session_id: str = Query(default="")):
+    _agent_loop_prune_jobs()
+    sid = (session_id or "").strip()
+    jobs = [
+        _agent_loop_job_summary(job)
+        for job in _agent_loop_jobs.values()
+        if job.status == "running" and (not sid or job.session_id == sid)
+    ]
+    jobs.sort(key=lambda item: item["updated_at"], reverse=True)
+    return {"jobs": jobs}
+
+
+@app.post("/api/agent-loop/start")
+async def start_agent_loop(req: AgentLoopStartRequest):
+    goal = (req.goal or "").strip()
+    if not goal:
+        raise HTTPException(status_code=400, detail="goal required")
+    _normalize_agent_loop_test_command(req.test_command or "")
+    session_id = (req.session_id or "").strip() or str(uuid.uuid4())
+    if session_id in _compacting_sessions:
+        raise HTTPException(status_code=409, detail="session is compacting")
+    if any(job.session_id == session_id and job.status == "running" for job in _agent_loop_jobs.values()):
+        raise HTTPException(status_code=409, detail="agent loop already running for this session")
+    _agent_loop_prune_jobs()
+    job = AgentLoopJob(id=uuid.uuid4().hex, session_id=session_id, created_at=time.time(), updated_at=time.time())
+    _agent_loop_jobs[job.id] = job
+    job.task = asyncio.create_task(_agent_loop_runner(job, req.copy(update={"session_id": session_id})))
+    return {"job_id": job.id, "session_id": session_id}
+
+
+@app.get("/api/agent-loop/{job_id}/stream")
+async def stream_agent_loop(job_id: str, from_index: int = Query(default=0, alias="from", ge=0)):
+    job = _agent_loop_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="agent loop job not found")
+
+    async def generate():
+        idx = min(from_index, len(job.events))
+        while True:
+            async with job.condition:
+                while idx >= len(job.events) and job.status == "running":
+                    await job.condition.wait()
+                pending = job.events[idx:]
+                idx = len(job.events)
+                done = job.status != "running" and not pending
+            for event in pending:
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            if done:
+                break
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/agent-loop/{job_id}/stop")
+async def stop_agent_loop(job_id: str):
+    job = _agent_loop_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="agent loop job not found")
+    job.stop_requested = True
+    if job.test_process and job.test_process.returncode is None:
+        try:
+            job.test_process.terminate()
+        except ProcessLookupError:
+            pass
+    if job.session_id:
+        try:
+            await stop_chat(job.session_id)
+        except HTTPException as e:
+            if e.status_code != 404:
+                raise
+    await _agent_loop_emit(job, {"type": "agent_loop_stop_requested", "job_id": job.id, "session_id": job.session_id})
+    return {"ok": True}
 
 
 @app.post("/api/chat/stop/{session_id}")
@@ -5918,6 +6480,46 @@ async def fetch_url(req: FetchUrlRequest):
 @app.get("/api/version")
 async def get_version():
     return {"version": __version__}
+
+
+@app.get("/api/update-check")
+async def update_check(force: bool = Query(default=False)):
+    now = time.time()
+    cached = _update_check_cache.get("data")
+    if cached is not None and not force and now - float(_update_check_cache.get("ts") or 0) < _UPDATE_CHECK_TTL_SECONDS:
+        return cached
+
+    def _fetch_latest() -> dict:
+        req = urllib.request.Request(_UPDATE_CHECK_URL, headers={"User-Agent": f"claude-web-ui/{__version__}"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+        info = payload.get("info") if isinstance(payload, dict) else {}
+        latest = (info or {}).get("version") or ""
+        url = (info or {}).get("package_url") or "https://pypi.org/project/claude-web-ui/"
+        return {
+            "current_version": __version__,
+            "latest_version": latest,
+            "update_available": bool(latest and _version_tuple(latest) > _version_tuple(__version__)),
+            "url": url,
+            "command": "pip install --upgrade claude-web-ui",
+            "checked_at": time.time(),
+        }
+
+    try:
+        data = await asyncio.get_event_loop().run_in_executor(None, _fetch_latest)
+    except Exception as e:
+        data = {
+            "current_version": __version__,
+            "latest_version": "",
+            "update_available": False,
+            "url": "https://pypi.org/project/claude-web-ui/",
+            "command": "pip install --upgrade claude-web-ui",
+            "error": str(e),
+            "checked_at": time.time(),
+        }
+    _update_check_cache["ts"] = now
+    _update_check_cache["data"] = data
+    return data
 
 
 @app.get("/changelog.json")

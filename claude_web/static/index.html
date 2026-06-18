@@ -728,10 +728,14 @@
   .whatsnew-list li { list-style: none; padding-left: 14px; position: relative; }
   .whatsnew-list li::before { content: "•"; position: absolute; left: 2px; color: var(--accent); }
   .whatsnew-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .whatsnew-copy { font-size: 12px; color: var(--text-muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; margin: 8px 0 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-x: auto; }
 
   /* ===== Help panel ===== */
   .help-section { margin-bottom: 18px; }
   .help-section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px; }
+  .help-update-box { border: 1px solid var(--border); background: var(--surface-2); border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; font-size: 12.5px; color: var(--text-muted); }
+  .help-update-box.hidden { display: none; }
+  .help-update-command { margin-top: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
   .kbd-list { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; font-size: 13px; }
   .kbd-list .desc { color: var(--text); }
   kbd {
@@ -1692,7 +1696,7 @@
     <div class="flex items-center justify-between mb-4">
       <div>
         <div class="text-lg font-semibold">Agent Loop</div>
-        <div class="text-xs mt-0.5" style="color:var(--text-subtle);">让 Claude 自动迭代：执行目标、跑测试、修复问题，直到完成或预算用完。</div>
+        <div class="text-xs mt-0.5" style="color:var(--text-subtle);">让 Claude 自动迭代：执行目标、跑测试、失败重试，直到完成、阻塞或预算用完。</div>
       </div>
       <button data-close class="text-xl">×</button>
     </div>
@@ -1718,10 +1722,10 @@
       </div>
       <div>
         <label class="block font-medium mb-1">测试命令（可选）</label>
-        <input id="agentLoopTestCommand" type="text" placeholder="例如：pytest 或 npm test；会交给 Claude 在每轮中自行运行" class="w-full px-3 py-2 text-sm" />
+        <input id="agentLoopTestCommand" type="text" placeholder="留空时自动检测：npm test、make test 或 pytest" class="w-full px-3 py-2 text-sm" />
       </div>
       <div class="rounded p-3 text-xs" style="background:var(--surface-2); border:1px solid var(--border); color:var(--text-muted);">
-        Loop 会复用当前权限策略和工作目录。浏览器标签页保持打开时效果最好；需要中断时点输入框上方的“停止”。
+        Loop 会在后端持续运行并复用当前权限策略和工作目录；每轮失败最多自动重试 2 次，连续遇到相同测试失败会暂停。需要中断时点输入框上方的“停止”。
       </div>
       <div class="flex justify-end gap-2 pt-1">
         <button type="button" data-close class="px-3 py-1.5 rounded text-sm" style="background:var(--surface-2); color:var(--text-muted);">取消</button>
@@ -2248,11 +2252,12 @@
 <!-- What's New toast -->
 <div id="whatsnewToast" class="whatsnew-toast hidden">
   <div class="whatsnew-title">
-    <span>✨ 已更新</span>
+    <span id="whatsnewTitleText">✨ 已更新</span>
     <span id="whatsnewVersion" class="whatsnew-version">v0.0.0</span>
     <button id="whatsnewClose" class="ml-auto text-base leading-none opacity-50 hover:opacity-100" style="background:none;border:none;cursor:pointer;color:var(--text-muted);">×</button>
   </div>
   <ul id="whatsnewList" class="whatsnew-list"></ul>
+  <div id="updateCommandBox" class="whatsnew-copy hidden"></div>
   <div class="whatsnew-actions">
     <button id="whatsnewViewAll" class="tour-btn">查看全部</button>
     <button id="whatsnewOk" class="tour-btn primary">知道了</button>
@@ -2265,6 +2270,11 @@
     <div class="flex items-center justify-between mb-4">
       <h3 class="text-base font-semibold">帮助 & 更新日志</h3>
       <button data-close class="text-xl leading-none opacity-60 hover:opacity-100" style="background:none;border:none;cursor:pointer;color:var(--text);">×</button>
+    </div>
+
+    <div id="helpUpdateBox" class="help-update-box hidden">
+      <div id="helpUpdateText"></div>
+      <div id="helpUpdateCommand" class="help-update-command"></div>
     </div>
 
     <div class="help-section">
@@ -4102,6 +4112,23 @@ function addSystemInfo(text) {
   chatInner.appendChild(el);
 }
 
+function addSystemAction(text, actionText, onClick) {
+  const el = document.createElement('div');
+  el.className = 'text-center text-xs text-gray-400 py-1';
+  const label = document.createElement('span');
+  label.textContent = text;
+  el.appendChild(label);
+  if (actionText && typeof onClick === 'function') {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ml-2 underline hover:text-amber-500';
+    btn.textContent = actionText;
+    btn.addEventListener('click', onClick);
+    el.appendChild(btn);
+  }
+  chatInner.appendChild(el);
+}
+
 // ===== token usage =====
 // Cumulative usage for the *currently open* session. Reset on session switch /
 // new session / load. Updated on every result event (live + history replay).
@@ -5866,50 +5893,16 @@ async function sendRaw(sentMessage, displayMessage, imagePaths = []) {
 }
 
 let agentLoopRunning = false;
+let agentLoopJobId = '';
+let agentLoopSessionId = '';
+let agentLoopNotifyOnFinish = true;
 let agentLoopStopRequested = false;
+const AGENT_LOOP_ACTIVE_KEY = 'cw_agent_loop_active';
 
-function setAgentLoopStatus(text) {
+function setAgentLoopStatus(text, active = agentLoopRunning) {
   if (!agentLoopStatus || !agentLoopStatusText) return;
-  agentLoopStatus.classList.toggle('active', agentLoopRunning);
+  agentLoopStatus.classList.toggle('active', active);
   agentLoopStatusText.textContent = text || '';
-}
-
-function agentLoopInitialPrompt({ goal, maxTurns, tokenBudget, testCommand }) {
-  return [
-    '进入 Agent Loop 自主工作模式。',
-    '',
-    `目标：${goal}`,
-    `预算：最多 ${maxTurns} 轮，约 ${tokenBudget} tokens。`,
-    testCommand ? `建议测试命令：${testCommand}` : '测试命令：请根据项目自行选择合适的检查/测试命令。',
-    '',
-    '请按以下循环工作：',
-    '1. 明确下一步计划。',
-    '2. 修改代码或文件。',
-    '3. 运行必要测试/检查。',
-    '4. 如果失败，分析错误并继续修复。',
-    '5. 如果目标已经完成且验证通过，请在回答最后单独写一行：AGENT_LOOP_DONE。',
-    '6. 如果无法继续，请在回答最后单独写一行：AGENT_LOOP_BLOCKED，并说明阻塞原因。',
-  ].join('\n');
-}
-
-function agentLoopContinuePrompt({ goal, turn, maxTurns, usedTokens, tokenBudget, testCommand }) {
-  return [
-    '继续 Agent Loop。',
-    '',
-    `目标：${goal}`,
-    `当前进度：第 ${turn} / ${maxTurns} 轮后继续。已用约 ${usedTokens} / ${tokenBudget} tokens。`,
-    testCommand ? `建议测试命令：${testCommand}` : '请继续自行选择合适的测试/检查命令。',
-    '',
-    '请继续执行、测试、修复。若已经完成并验证通过，请在回答最后单独写一行：AGENT_LOOP_DONE。若无法继续，请写：AGENT_LOOP_BLOCKED。',
-  ].join('\n');
-}
-
-function agentLoopIsDone(text) {
-  return /\bAGENT_LOOP_DONE\b/i.test(text || '');
-}
-
-function agentLoopIsBlocked(text) {
-  return /\bAGENT_LOOP_BLOCKED\b/i.test(text || '');
 }
 
 function openAgentLoopModal() {
@@ -5917,6 +5910,60 @@ function openAgentLoopModal() {
   agentLoopGoal.value = input.value.trim();
   openModal(agentLoopModal);
   setTimeout(() => agentLoopGoal.focus(), 0);
+}
+
+function saveActiveAgentLoop(jobId, sid, goal, notifyOnFinish = true) {
+  if (!jobId) return;
+  try {
+    localStorage.setItem(AGENT_LOOP_ACTIVE_KEY, JSON.stringify({ jobId, sessionId: sid || '', goal: goal || '', notifyOnFinish, ts: Date.now() }));
+  } catch {}
+}
+
+function clearActiveAgentLoop(jobId = agentLoopJobId) {
+  try {
+    const raw = localStorage.getItem(AGENT_LOOP_ACTIVE_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (!jobId || data.jobId === jobId) localStorage.removeItem(AGENT_LOOP_ACTIVE_KEY);
+  } catch {
+    localStorage.removeItem(AGENT_LOOP_ACTIVE_KEY);
+  }
+}
+
+async function restoreActiveAgentLoopForSession() {
+  if (agentLoopRunning || !sessionId) return;
+  const restoreSessionId = sessionId;
+  try {
+    const data = JSON.parse(localStorage.getItem(AGENT_LOOP_ACTIVE_KEY) || '{}');
+    if (!data.jobId || data.sessionId !== restoreSessionId) return;
+    const resp = await fetch(`/api/agent-loop/active?session_id=${encodeURIComponent(restoreSessionId)}`);
+    if (!resp.ok) return;
+    const payload = await resp.json();
+    const match = (payload.jobs || []).find(job => job.job_id === data.jobId);
+    if (!match) {
+      clearActiveAgentLoop(data.jobId);
+      return;
+    }
+    if (sessionId !== restoreSessionId) return;
+    agentLoopRunning = true;
+    agentLoopStopRequested = false;
+    agentLoopJobId = data.jobId;
+    agentLoopSessionId = restoreSessionId;
+    agentLoopNotifyOnFinish = data.notifyOnFinish !== false;
+    if (agentLoopBtn) agentLoopBtn.classList.add('toolbar-btn-active');
+    sendBtn.disabled = true;
+    setAgentLoopStatus('正在恢复 Agent Loop 事件流...');
+    await streamAgentLoop(agentLoopJobId, data.goal || 'Agent Loop', Math.max(0, Number(match.event_count || 0)));
+  } catch (e) {
+    console.warn('restore agent loop failed', e);
+  } finally {
+    agentLoopRunning = false;
+    if (agentLoopBtn) agentLoopBtn.classList.remove('toolbar-btn-active');
+    sendBtn.disabled = false;
+    agentLoopJobId = '';
+    agentLoopSessionId = '';
+    setAgentLoopStatus('');
+  }
 }
 
 async function runAgentLoop() {
@@ -5931,6 +5978,7 @@ async function runAgentLoop() {
   const tokenBudget = Math.max(1000, Number(agentLoopTokenBudget.value || 30000));
   const testCommand = agentLoopTestCommand.value.trim();
   const notifyOnFinish = !!agentLoopNotify.checked;
+  const perm = buildPermissionPayload();
   closeModal(agentLoopModal);
   clearDraft();
   input.value = '';
@@ -5939,48 +5987,47 @@ async function runAgentLoop() {
 
   agentLoopRunning = true;
   agentLoopStopRequested = false;
+  agentLoopJobId = '';
+  agentLoopSessionId = '';
+  agentLoopNotifyOnFinish = notifyOnFinish;
   if (agentLoopBtn) agentLoopBtn.classList.add('toolbar-btn-active');
-  let usedTokens = 0;
-  let lastText = '';
   setAgentLoopStatus(`第 1/${maxTurns} 轮 · 0/${_fmtTokens(tokenBudget)} tokens`);
+  sendBtn.disabled = true;
   try {
-    for (let turn = 1; turn <= maxTurns; turn++) {
-      if (agentLoopStopRequested) break;
-      const prompt = turn === 1
-        ? agentLoopInitialPrompt({ goal, maxTurns, tokenBudget, testCommand })
-        : agentLoopContinuePrompt({ goal, turn, maxTurns, usedTokens, tokenBudget, testCommand });
-      setAgentLoopStatus(`第 ${turn}/${maxTurns} 轮运行中 · ${_fmtTokens(usedTokens)}/${_fmtTokens(tokenBudget)} tokens`);
-      const result = await sendCore(prompt, turn === 1 ? goal : `继续 Agent Loop：${goal}`, [], { forceNew: turn === 1, quiet: true });
-      if (!result?.ok) {
-        if (!result?.aborted && !agentLoopStopRequested) {
-          toast('Agent Loop 本轮失败，已停止继续循环');
-        }
-        break;
-      }
-      lastText = result?.text || '';
-      usedTokens += usageTokenTotal(result?.usage);
-      setAgentLoopStatus(`第 ${turn}/${maxTurns} 轮完成 · ${_fmtTokens(usedTokens)}/${_fmtTokens(tokenBudget)} tokens`);
-      if (agentLoopStopRequested) break;
-      if (agentLoopIsDone(lastText)) {
-        toast('Agent Loop 已完成');
-        if (notifyOnFinish) notifyUser('Agent Loop 已完成', goal.slice(0, 80));
-        break;
-      }
-      if (agentLoopIsBlocked(lastText)) {
-        toast('Agent Loop 已阻塞，查看最后一条回复');
-        if (notifyOnFinish) notifyUser('Agent Loop 已阻塞', goal.slice(0, 80));
-        break;
-      }
-      if (usedTokens >= tokenBudget) {
-        toast('Agent Loop 已达到 token 上限');
-        if (notifyOnFinish) notifyUser('Agent Loop 已达到预算', goal.slice(0, 80));
-        break;
-      }
-      if (turn === maxTurns) {
-        toast('Agent Loop 已达到最多轮数');
-        if (notifyOnFinish) notifyUser('Agent Loop 已达到轮数上限', goal.slice(0, 80));
-      }
+    const resp = await fetch('/api/agent-loop/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        goal,
+        session_id: sessionId,
+        cwd: cwdInput.value.trim() || null,
+        model: modelSelect.value || null,
+        system_prompt: settings.systemPrompt || null,
+        permission_mode: perm.permission_mode,
+        allowed_tools: perm.allowed_tools,
+        disallowed_tools: perm.disallowed_tools,
+        max_turns: maxTurns,
+        token_budget: tokenBudget,
+        test_command: testCommand,
+        notify_on_finish: notifyOnFinish,
+        force_new: true,
+      }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(text || ('HTTP ' + resp.status));
     }
+    const data = await resp.json();
+    agentLoopJobId = data.job_id;
+    agentLoopSessionId = data.session_id;
+    sessionId = data.session_id;
+    saveActiveAgentLoop(agentLoopJobId, sessionId, goal, notifyOnFinish);
+    sessionLabelText.textContent = '会话 ' + sessionId.slice(0, 8);
+    suggestTitleBtn.classList.remove('hidden');
+    if (agentLoopStopRequested) {
+      await fetch(`/api/agent-loop/${encodeURIComponent(agentLoopJobId)}/stop`, { method:'POST' });
+    }
+    await streamAgentLoop(agentLoopJobId, goal);
   } catch (e) {
     toast('Agent Loop 出错：' + (e.message || e), { timeout: 5000 });
   } finally {
@@ -5988,16 +6035,141 @@ async function runAgentLoop() {
     agentLoopStopRequested = false;
     if (agentLoopBtn) agentLoopBtn.classList.remove('toolbar-btn-active');
     sendBtn.disabled = false;
+    agentLoopJobId = '';
+    agentLoopSessionId = '';
     setAgentLoopStatus('');
     refreshSessions();
   }
 }
 
+async function streamAgentLoop(jobId, goal, fromEvent = 0) {
+  currentController = new AbortController();
+  stopBtn.classList.remove('hidden');
+  let asstContainer = null;
+  try {
+    const query = fromEvent > 0 ? `?from=${encodeURIComponent(fromEvent)}` : '';
+    const resp = await fetch(`/api/agent-loop/${encodeURIComponent(jobId)}/stream${query}`, {
+      signal: currentController.signal,
+    });
+    if (!resp.ok || !resp.body) throw new Error('Agent Loop stream failed: ' + resp.status);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop();
+      for (const chunk of parts) {
+        const line = chunk.split('\n').find(l => l.startsWith('data: '));
+        if (!line) continue;
+        const obj = JSON.parse(line.slice(6));
+        const result = handleAgentLoopEvent(obj, asstContainer, goal);
+        if (result === null) {
+          asstContainer = null;
+          continue;
+        }
+        if (result) asstContainer = result;
+      }
+    }
+  } finally {
+    stopBtn.classList.add('hidden');
+    currentController = null;
+    finishPendingToolUses('已结束', 'done');
+    refreshSessions();
+    refreshCwds();
+    refreshGitStatus();
+  }
+}
+
+function handleAgentLoopEvent(obj, asstContainer, goal) {
+  if (obj.type === 'chat_event') {
+    const event = obj.event || {};
+    if (event.type === 'user_input') return asstContainer;
+    const result = handleEvent(event, asstContainer);
+    return result || asstContainer;
+  }
+  if (obj.type === 'agent_loop_started') {
+    const detected = obj.test_command && obj.test_command_source && obj.test_command_source !== 'manual';
+    setAgentLoopStatus(`后端 Agent Loop 已启动 · 0/${_fmtTokens(obj.token_budget || 0)} tokens`);
+    if (detected) addSystemInfo(`Agent Loop 自动检测测试命令：${obj.test_command}（${obj.test_command_source}）`);
+    return asstContainer;
+  }
+  if (obj.type === 'agent_loop_turn_start') {
+    setAgentLoopStatus(`第 ${obj.turn}/${obj.max_turns} 轮运行中 · ${_fmtTokens(obj.used_tokens || 0)}/${_fmtTokens(obj.token_budget || 0)} tokens`);
+    return asstContainer;
+  }
+  if (obj.type === 'agent_loop_user_message') {
+    addUserMessage(obj.text || '', []);
+    return null;
+  }
+  if (obj.type === 'agent_loop_checkpoint') {
+    const userIdx = lastUserIndex;
+    if (userIdx >= 0) {
+      markLastUserMessageCheckpoint(userIdx);
+      addSystemAction(`第 ${obj.turn || '?'} 轮前已创建 Git checkpoint`, '回滚', () => {
+        if (!confirm('回滚到这一轮 Agent Loop 开始前的文件状态？\n\n对话历史不受影响。')) return;
+        restoreCheckpoint(userIdx);
+      });
+    }
+    return asstContainer;
+  }
+  if (obj.type === 'agent_loop_turn_done') {
+    setAgentLoopStatus(`第 ${obj.turn} 轮完成 · ${_fmtTokens(obj.used_tokens || 0)}/${_fmtTokens(obj.token_budget || 0)} tokens`);
+    return asstContainer;
+  }
+  if (obj.type === 'agent_loop_retry') {
+    addSystemInfo(`本轮失败，正在自动重试 ${obj.retry}/${obj.max_retries}`);
+    setAgentLoopStatus(`自动重试 ${obj.retry}/${obj.max_retries}...`);
+    return asstContainer;
+  }
+  if (obj.type === 'agent_loop_test_start') {
+    addSystemInfo('Agent Loop 正在运行测试：' + obj.command);
+    setAgentLoopStatus('正在运行测试命令...');
+    return asstContainer;
+  }
+  if (obj.type === 'agent_loop_test_result') {
+    const r = obj.result || {};
+    const dur = r.duration_ms !== undefined ? ` · ${(r.duration_ms / 1000).toFixed(1)}s` : '';
+    addSystemInfo(`测试完成 · 退出码 ${r.returncode}${r.timed_out ? ' · 超时' : ''}${dur}`);
+    return asstContainer;
+  }
+  if (obj.type === 'agent_loop_error') {
+    addErrorBlock(obj.message || 'Agent Loop 出错');
+    return asstContainer;
+  }
+  if (obj.type === 'agent_loop_stuck') {
+    addSystemInfo(`连续 ${obj.repeat_count || 3} 次遇到相同测试失败，已暂停等待人工介入`);
+    return asstContainer;
+  }
+  if (obj.type === 'agent_loop_blocked') {
+    addSystemInfo('Agent Loop 已阻塞：连续失败后仍未恢复');
+    return asstContainer;
+  }
+  if (obj.type === 'agent_loop_stop_requested') {
+    setAgentLoopStatus('正在停止...');
+    return asstContainer;
+  }
+  if (obj.type === 'agent_loop_done') {
+    const message = obj.message || 'Agent Loop 已结束';
+    toast(message);
+    if (agentLoopNotifyOnFinish) notifyUser(message, goal.slice(0, 80));
+    addSystemInfo(message);
+    clearActiveAgentLoop();
+    return asstContainer;
+  }
+  return asstContainer;
+}
+
 async function stopAgentLoop() {
   agentLoopStopRequested = true;
   setAgentLoopStatus('正在停止...');
-  if (sessionId) { try { await fetch('/api/chat/stop/' + sessionId, { method:'POST' }); } catch {} }
-  if (currentController) currentController.abort();
+  if (agentLoopJobId) { try { await fetch(`/api/agent-loop/${encodeURIComponent(agentLoopJobId)}/stop`, { method:'POST' }); } catch {} }
+  else {
+    if (sessionId) { try { await fetch('/api/chat/stop/' + sessionId, { method:'POST' }); } catch {} }
+    if (currentController) currentController.abort();
+  }
 }
 
 async function sendCore(message, displayMessage, imagePaths, options = {}) {
@@ -6146,6 +6318,10 @@ async function sendCore(message, displayMessage, imagePaths, options = {}) {
 }
 
 stopBtn.addEventListener('click', async () => {
+  if (agentLoopRunning) {
+    await stopAgentLoop();
+    return;
+  }
   if (sessionId) { try { await fetch('/api/chat/stop/' + sessionId, { method:'POST' }); } catch {} }
   if (currentController) currentController.abort();
 });
@@ -6533,6 +6709,7 @@ async function loadSession(id) {
     forceScrollBottom();
     highlightActiveSession();
     if (window.innerWidth <= 768) sidebar.classList.remove('open');
+    restoreActiveAgentLoopForSession();
   } catch (e) { console.warn(e); }
 }
 
@@ -8734,8 +8911,11 @@ setInterval(refreshStats, 60000);
 // ===== Onboarding + What's New + Help =====
 const ONBOARD_KEY = 'cw_onboarded_v1';
 const SEEN_VERSION_KEY = 'cw_seen_version';
+const DISMISSED_UPDATE_KEY = 'cw_dismissed_update_version';
 let appVersion = '0.0.0';
 let changelogData = null;
+let latestUpdateInfo = null;
+let whatsnewMode = 'changelog';
 
 async function loadVersionAndChangelog() {
   try {
@@ -8904,6 +9084,8 @@ window.addEventListener('resize', () => { if (!$('tourOverlay').classList.contai
 function showWhatsNew(releases) {
   if (!releases?.length) return;
   const latest = releases[0];
+  whatsnewMode = 'changelog';
+  $('whatsnewTitleText').textContent = '✨ 已更新';
   $('whatsnewVersion').textContent = 'v' + latest.version;
   const items = releases.slice(0, 2).flatMap(r =>
     r.highlights.filter(isFeatureHighlight).slice(0, 4).map(h => h.text)
@@ -8914,22 +9096,91 @@ function showWhatsNew(releases) {
     html += `<li style="color:var(--text-subtle);">+ ${fixCount} 项稳定性 / bug 修复</li>`;
   }
   $('whatsnewList').innerHTML = html;
+  $('updateCommandBox').classList.add('hidden');
+  $('whatsnewViewAll').textContent = '查看全部';
+  $('whatsnewOk').textContent = '知道了';
   $('whatsnewToast').classList.remove('hidden');
 }
 
 function dismissWhatsNew() {
   $('whatsnewToast').classList.add('hidden');
-  localStorage.setItem(SEEN_VERSION_KEY, appVersion);
+  if (whatsnewMode === 'update' && latestUpdateInfo?.latest_version) {
+    localStorage.setItem(DISMISSED_UPDATE_KEY, latestUpdateInfo.latest_version);
+  } else {
+    localStorage.setItem(SEEN_VERSION_KEY, appVersion);
+  }
   const badge = $('helpBadge');
-  if (badge) badge.classList.add('hidden');
+  const hasPendingUpdate = latestUpdateInfo?.update_available && latestUpdateInfo?.latest_version;
+  if (badge) badge.classList.toggle('hidden', !hasPendingUpdate);
+  whatsnewMode = 'changelog';
 }
 
 $('whatsnewClose').addEventListener('click', dismissWhatsNew);
 $('whatsnewOk').addEventListener('click', dismissWhatsNew);
 $('whatsnewViewAll').addEventListener('click', () => {
+  if (whatsnewMode === 'update' && latestUpdateInfo?.update_available) {
+    navigator.clipboard?.writeText(latestUpdateInfo.command || 'pip install --upgrade claude-web-ui');
+    toast('更新命令已复制');
+    return;
+  }
   dismissWhatsNew();
   openHelp();
 });
+
+function showUpdateAvailable(info) {
+  latestUpdateInfo = info;
+  whatsnewMode = 'update';
+  renderHelpUpdateBox();
+  $('whatsnewTitleText').textContent = '⬆️ 发现新版';
+  $('whatsnewVersion').textContent = `v${info.latest_version || ''}`;
+  $('whatsnewList').innerHTML = [
+    `<li>当前版本 v${escapeHtml(info.current_version || appVersion)}，最新版 v${escapeHtml(info.latest_version || '')}</li>`,
+    '<li>更新后重启 claude-web 即可使用新功能</li>',
+  ].join('');
+  const command = info.command || 'pip install --upgrade claude-web-ui';
+  $('updateCommandBox').textContent = command;
+  $('updateCommandBox').classList.remove('hidden');
+  $('whatsnewViewAll').textContent = '复制命令';
+  $('whatsnewOk').textContent = '稍后提醒';
+  $('whatsnewToast').classList.remove('hidden');
+  const badge = $('helpBadge');
+  if (badge) badge.classList.remove('hidden');
+}
+
+function renderHelpUpdateBox() {
+  const box = $('helpUpdateBox');
+  if (!box) return;
+  if (!latestUpdateInfo?.update_available) {
+    box.classList.add('hidden');
+    return;
+  }
+  $('helpUpdateText').textContent = `发现新版 v${latestUpdateInfo.latest_version}，当前 v${latestUpdateInfo.current_version || appVersion}`;
+  $('helpUpdateCommand').textContent = latestUpdateInfo.command || 'pip install --upgrade claude-web-ui';
+  box.classList.remove('hidden');
+}
+
+async function checkForAvailableUpdate() {
+  try {
+    const info = await fetch('/api/update-check').then(r => r.json());
+    if (!info?.update_available || !info.latest_version) return;
+    if (compareVersion(info.latest_version, appVersion) <= 0) return;
+    if (localStorage.getItem(DISMISSED_UPDATE_KEY) === info.latest_version) {
+      latestUpdateInfo = info;
+      renderHelpUpdateBox();
+      const badge = $('helpBadge');
+      if (badge) badge.classList.remove('hidden');
+      return;
+    }
+    if (!$('whatsnewToast').classList.contains('hidden')) {
+      latestUpdateInfo = info;
+      renderHelpUpdateBox();
+      const badge = $('helpBadge');
+      if (badge) badge.classList.remove('hidden');
+      return;
+    }
+    setTimeout(() => showUpdateAvailable(info), 1200);
+  } catch {}
+}
 
 // ----- Help panel -----
 function renderChangelog() {
@@ -8948,6 +9199,7 @@ function renderChangelog() {
 }
 
 function openHelp() {
+  renderHelpUpdateBox();
   renderChangelog();
   $('helpModal').classList.remove('hidden');
 }
@@ -8989,6 +9241,7 @@ $('helpReplayTour').addEventListener('click', () => {
       $('helpBadge').classList.remove('hidden');
     }
   }
+  checkForAvailableUpdate();
 })();
 </script>
 </body>
